@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { VoxelTreeMascot } from './VoxelTreeMascot';
 
 const homeActions = [
   {
@@ -146,6 +147,8 @@ export default function App() {
                 ))}
               </div>
             </div>
+
+            <VoxelTreeMascot />
           </section>
         ) : null}
 
