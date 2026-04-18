@@ -1,14 +1,27 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import stageOneMascot from './assets/stage-1-mascot.png';
 import { api } from './api/client';
 
-type LocationContext = 'airport' | 'campus' | 'downtown' | 'suburb' | 'home' | 'other';
-type NutritionGoal =
-  | 'high_protein'
-  | 'low_calorie'
-  | 'energy_focus'
-  | 'balanced'
-  | 'vegetarian'
-  | 'budget';
+type VisionFoodItem = {
+  name: string;
+  quantity?: string | null;
+  portion_size?: string | null;
+};
+
+type VisionResult = {
+  success: boolean;
+  food_items: VisionFoodItem[];
+  visible_labels?: string[];
+  non_food_items?: string[];
+  confidence?: string;
+  notes?: string | null;
+  error?: string | null;
+};
+
+type FridgeResult = {
+  ingredients_detected: { name: string; category?: string; confidence?: number }[];
+  likely_meals: { name: string; ingredients_used: string[]; effort: string; notes?: string }[];
+};
 
 type Recommendation = {
   recommendation_type: string;
@@ -20,141 +33,223 @@ type Recommendation = {
   constraints_considered: string[];
 };
 
-type FridgeResult = {
-  ingredients_detected: { name: string; category: string; confidence: number }[];
-  confidence_summary: { high: number; medium: number; low: number; dropped: number };
-  likely_meals: { name: string; ingredients_used: string[]; effort: string; notes: string }[];
-  missing_ingredients: { meal: string; need: string[]; impact: string }[];
-  perishability_priority: string[];
-};
-
 type SpriteLine = {
   line: string;
-  mood: 'cheerful' | 'encouraging' | 'playful' | 'gentle' | 'proud';
-  followup_prompt: string;
+  mood: string;
+  followup_prompt?: string;
 };
 
-type Flow = 'landing' | 'eat_out' | 'eat_in' | 'result';
-
-const locationChoices: { value: LocationContext; label: string }[] = [
-  { value: 'home', label: 'Home' },
-  { value: 'campus', label: 'Campus' },
-  { value: 'airport', label: 'Airport' },
-  { value: 'downtown', label: 'Downtown' },
-  { value: 'suburb', label: 'Suburb' },
-  { value: 'other', label: 'Other' },
-];
-
-const goalChoices: { value: NutritionGoal; label: string }[] = [
-  { value: 'high_protein', label: 'High protein' },
-  { value: 'low_calorie', label: 'Low calorie' },
-  { value: 'energy_focus', label: 'Energy / focus' },
-  { value: 'balanced', label: 'Balanced' },
-  { value: 'vegetarian', label: 'Vegetarian' },
-  { value: 'budget', label: 'Budget' },
-];
-
-const actionCards = [
+const homeActions = [
   {
-    key: 'eat_in' as const,
     title: 'Eat In',
     description: 'Build something from what you already have and get a calmer, home-base plan.',
+    nextPage: 'eat-in-camera' as const,
   },
   {
-    key: 'eat_out' as const,
     title: 'Eat Out',
     description: 'Find a strong option on the go with guidance for menus, takeout, or quick stops.',
+    nextPage: 'eat-out-pick' as const,
   },
 ];
 
+type LocationContext = 'airport' | 'campus' | 'downtown' | 'suburb' | 'home' | 'other';
+type Page = 'welcome' | 'eat-in-camera' | 'eat-in-results' | 'eat-out-pick' | 'eat-out-results';
+
+const locationOptions: { key: LocationContext; label: string; description: string }[] = [
+  { key: 'airport', label: 'Airport', description: 'Gates, food courts, limited but scannable.' },
+  { key: 'campus', label: 'Campus', description: 'Dining halls, cafes, quick grab-and-go.' },
+  { key: 'downtown', label: 'Downtown', description: 'Restaurants, takeout, coffee shops.' },
+  { key: 'suburb', label: 'Suburb', description: 'Chains, drive-thru, supermarket deli.' },
+  { key: 'other', label: 'Somewhere else', description: 'Whatever is within reach.' },
+];
+type CameraStatus = 'idle' | 'requesting' | 'ready' | 'blocked' | 'captured';
+
 export default function App() {
-  const [flow, setFlow] = useState<Flow>('landing');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState<Page>('welcome');
+  const [cameraStatus, setCameraStatus] = useState<CameraStatus>('idle');
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
+
+  const [analysisStage, setAnalysisStage] = useState<
+    'idle' | 'vision' | 'fridge' | 'recommend' | 'sprite' | 'done' | 'error'
+  >('idle');
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [vision, setVision] = useState<VisionResult | null>(null);
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
-  const [fridgeResult, setFridgeResult] = useState<FridgeResult | null>(null);
   const [sprite, setSprite] = useState<SpriteLine | null>(null);
 
-  const [location, setLocation] = useState<LocationContext>('campus');
-  const [goals, setGoals] = useState<NutritionGoal[]>(['balanced']);
-  const [ingredientsText, setIngredientsText] = useState('');
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
-  const reset = () => {
-    setFlow('landing');
-    setRecommendation(null);
-    setFridgeResult(null);
-    setSprite(null);
-    setError(null);
-    setLoading(false);
+  const stopCamera = () => {
+    if (!streamRef.current) {
+      return;
+    }
+
+    streamRef.current.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
   };
 
-  const toggleGoal = (g: NutritionGoal) => {
-    setGoals((cur) => (cur.includes(g) ? cur.filter((x) => x !== g) : [...cur, g]));
-  };
+  const startCamera = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraStatus('blocked');
+      setCameraError('Camera access is not supported in this browser.');
+      return;
+    }
 
-  const runEatOut = async () => {
-    setLoading(true);
-    setError(null);
+    stopCamera();
+    setCameraStatus('requesting');
+    setCameraError(null);
+
     try {
-      const rec = await api.post<Recommendation>('/location-recommendation', {
-        location: { context: location },
-        preferences: { goals, dietary_restrictions: [] },
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } },
+        audio: false,
       });
-      setRecommendation(rec);
-      const spoken = await api.post<SpriteLine>('/sprite/speak', {
-        occasion: 'recommendation',
-        recommendation: rec,
-        user_goal: goals[0] ?? 'balanced',
-        location_context: location,
-      });
-      setSprite(spoken);
-      setFlow('result');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong.');
-    } finally {
-      setLoading(false);
+
+      streamRef.current = stream;
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+
+      setCameraStatus('ready');
+    } catch (error) {
+      setCameraStatus('blocked');
+      setCameraError(
+        error instanceof Error
+          ? error.message
+          : 'Camera permission was denied or the device camera is unavailable.',
+      );
     }
   };
 
-  const runEatIn = async () => {
-    setLoading(true);
-    setError(null);
+  const handleCapture = () => {
+    if (!videoRef.current || !canvasRef.current) {
+      return;
+    }
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const width = video.videoWidth;
+    const height = video.videoHeight;
+
+    if (!width || !height) {
+      return;
+    }
+
+    canvas.width = width;
+    canvas.height = height;
+
+    const context = canvas.getContext('2d');
+    if (!context) {
+      return;
+    }
+
+    context.drawImage(video, 0, 0, width, height);
+    const imageData = canvas.toDataURL('image/jpeg', 0.92);
+
+    setCapturedPhoto(imageData);
+    setCameraStatus('captured');
+    stopCamera();
+    setVision(null);
+    setRecommendation(null);
+    setSprite(null);
+    setAnalysisError(null);
+    setAnalysisStage('idle');
+    setCurrentPage('eat-in-results');
+    void runAnalysis(imageData);
+  };
+
+  const runAnalysis = async (dataUrl: string) => {
     try {
-      const raw = ingredientsText
-        .split(/[\n,]/)
-        .map((s) => s.trim())
-        .filter(Boolean)
-        .map((name) => ({ name }));
-      if (raw.length === 0) {
-        setError('Add at least one ingredient.');
-        setLoading(false);
-        return;
+      const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, '');
+
+      setAnalysisStage('vision');
+      const visionRes = await api.post<VisionResult>('/images/analyze', { image: base64 });
+      setVision(visionRes);
+      if (!visionRes.success || visionRes.food_items.length === 0) {
+        throw new Error(visionRes.error ?? 'No food items detected in the photo.');
       }
-      const fridge = await api.post<FridgeResult>('/fridge-interpretation', {
-        raw_ingredients: raw,
-        preferences: { goals, dietary_restrictions: [] },
+
+      setAnalysisStage('fridge');
+      const raw_ingredients = visionRes.food_items.map((f) => ({
+        name: f.name,
+        confidence: 0.9,
+      }));
+      const fridgeRes = await api.post<FridgeResult>('/fridge-interpretation', {
+        raw_ingredients,
       });
-      setFridgeResult(fridge);
-      const rec = await api.post<Recommendation>('/location-recommendation', {
+
+      setAnalysisStage('recommend');
+      const recRes = await api.post<Recommendation>('/location-recommendation', {
         location: { context: 'home' },
-        preferences: { goals, dietary_restrictions: [] },
-        fridge_data: fridge,
+        preferences: { goals: [], dietary_restrictions: [] },
+        fridge_data: fridgeRes,
       });
-      setRecommendation(rec);
-      const spoken = await api.post<SpriteLine>('/sprite/speak', {
+      setRecommendation(recRes);
+
+      setAnalysisStage('sprite');
+      const spriteRes = await api.post<SpriteLine>('/sprite/speak', {
         occasion: 'recommendation',
-        recommendation: rec,
-        user_goal: goals[0] ?? 'balanced',
+        recommendation: recRes,
+        user_goal: 'balanced',
         location_context: 'home',
       });
-      setSprite(spoken);
-      setFlow('result');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong.');
-    } finally {
-      setLoading(false);
+      setSprite(spriteRes);
+
+      setAnalysisStage('done');
+    } catch (err) {
+      setAnalysisError(err instanceof Error ? err.message : 'Analysis failed.');
+      setAnalysisStage('error');
     }
   };
+
+  const runEatOut = async (ctx: LocationContext) => {
+    setVision(null);
+    setRecommendation(null);
+    setSprite(null);
+    setAnalysisError(null);
+    setCurrentPage('eat-out-results');
+    try {
+      setAnalysisStage('recommend');
+      const recRes = await api.post<Recommendation>('/location-recommendation', {
+        location: { context: ctx },
+        preferences: { goals: [], dietary_restrictions: [] },
+      });
+      setRecommendation(recRes);
+
+      setAnalysisStage('sprite');
+      const spriteRes = await api.post<SpriteLine>('/sprite/speak', {
+        occasion: 'recommendation',
+        recommendation: recRes,
+        user_goal: 'balanced',
+        location_context: ctx,
+      });
+      setSprite(spriteRes);
+
+      setAnalysisStage('done');
+    } catch (err) {
+      setAnalysisError(err instanceof Error ? err.message : 'Analysis failed.');
+      setAnalysisStage('error');
+    }
+  };
+
+  useEffect(() => {
+    if (currentPage === 'eat-in-camera') {
+      void startCamera();
+    } else if (cameraStatus !== 'captured') {
+      stopCamera();
+      setCameraStatus('idle');
+      setCameraError(null);
+    }
+
+    return () => {
+      stopCamera();
+    };
+  }, [currentPage]);
 
   return (
     <div className="welcome-shell">
@@ -162,162 +257,328 @@ export default function App() {
       <div className="welcome-glow welcome-glow-right" aria-hidden="true" />
 
       <main className="welcome-layout">
-        <section className="hero-content">
-          <h1 className="hero-title">Nourish Orbit</h1>
-          <p className="hero-copy">
-            Small, smart food decisions for the part of your day you are in right now.
-          </p>
+        {currentPage === 'welcome' ? (
+          <section className="hero-content">
+            <h1 className="hero-title">Nourish Orbit</h1>
+            <p className="hero-copy">
+              Small, smart food decisions for the part of your day you are in right now.
+            </p>
 
-          {flow === 'landing' && (
-            <div className="question-block">
-              <p className="question-label">What would you like to do today?</p>
-              <div className="action-grid">
-                {actionCards.map((action) => (
-                  <button
-                    key={action.key}
-                    type="button"
-                    className="action-button"
-                    onClick={() => setFlow(action.key)}
-                  >
-                    <span className="action-title">{action.title}</span>
-                    <span className="action-description">{action.description}</span>
-                  </button>
-                ))}
+            <div className="hero-speaker">
+              <div className="question-bubble">
+                <div className="bubble-tail" aria-hidden="true" />
+                <p className="question-label">What would you like to do today?</p>
+
+                <div className="action-grid action-grid-stacked">
+                  {homeActions.map((action) => (
+                    <button
+                      key={action.title}
+                      type="button"
+                      className="action-button action-button-compact"
+                      onClick={() => setCurrentPage(action.nextPage)}
+                    >
+                      <span className="action-title">{action.title}</span>
+                      <span className="action-description">{action.description}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
+
+              <img src={stageOneMascot} alt="Stage 1 mascot" className="mascot-sprite mascot-sprite-large" />
             </div>
-          )}
+          </section>
+        ) : null}
 
-          {flow === 'eat_out' && (
-            <div className="flow-panel">
-              <button type="button" className="back-link" onClick={reset}>
-                ← Back
-              </button>
-              <h2 className="panel-title">Where are you right now?</h2>
-              <div className="chip-row">
-                {locationChoices.map((c) => (
-                  <button
-                    key={c.value}
-                    type="button"
-                    className={`chip ${location === c.value ? 'chip-on' : ''}`}
-                    onClick={() => setLocation(c.value)}
-                  >
-                    {c.label}
-                  </button>
-                ))}
-              </div>
-              <h2 className="panel-title">What matters most?</h2>
-              <div className="chip-row">
-                {goalChoices.map((g) => (
-                  <button
-                    key={g.value}
-                    type="button"
-                    className={`chip ${goals.includes(g.value) ? 'chip-on' : ''}`}
-                    onClick={() => toggleGoal(g.value)}
-                  >
-                    {g.label}
-                  </button>
-                ))}
-              </div>
-              <button
-                type="button"
-                className="primary-button"
-                onClick={runEatOut}
-                disabled={loading}
-              >
-                {loading ? 'Thinking…' : 'Get a recommendation'}
-              </button>
-              {error && <p className="error-text">{error}</p>}
-            </div>
-          )}
+        {currentPage === 'eat-in-camera' ? (
+          <section className="flow-page">
+            <button type="button" className="back-button" onClick={() => setCurrentPage('welcome')}>
+              Back
+            </button>
 
-          {flow === 'eat_in' && (
-            <div className="flow-panel">
-              <button type="button" className="back-link" onClick={reset}>
-                ← Back
-              </button>
-              <h2 className="panel-title">What's in your fridge?</h2>
-              <p className="panel-hint">One per line, or comma-separated.</p>
-              <textarea
-                className="ingredient-input"
-                rows={5}
-                placeholder="eggs&#10;spinach&#10;rice&#10;feta"
-                value={ingredientsText}
-                onChange={(e) => setIngredientsText(e.target.value)}
-              />
-              <h2 className="panel-title">What matters most?</h2>
-              <div className="chip-row">
-                {goalChoices.map((g) => (
-                  <button
-                    key={g.value}
-                    type="button"
-                    className={`chip ${goals.includes(g.value) ? 'chip-on' : ''}`}
-                    onClick={() => toggleGoal(g.value)}
-                  >
-                    {g.label}
-                  </button>
-                ))}
-              </div>
-              <button
-                type="button"
-                className="primary-button"
-                onClick={runEatIn}
-                disabled={loading}
-              >
-                {loading ? 'Thinking…' : 'Plan a meal'}
-              </button>
-              {error && <p className="error-text">{error}</p>}
-            </div>
-          )}
+            <div className="flow-content">
+              <p className="placeholder-kicker">Eat In Flow</p>
+              <h1 className="placeholder-title">Take a picture of what you have on hand</h1>
+              <p className="placeholder-copy">
+                Use your camera to capture the ingredients you have available. After the photo is
+                taken, the future agent will inspect what is on hand and suggest what you can make.
+              </p>
 
-          {flow === 'result' && recommendation && (
-            <div className="flow-panel result-panel">
-              <button type="button" className="back-link" onClick={reset}>
-                ← Start over
-              </button>
+              <div className="camera-stage">
+                <video
+                  ref={videoRef}
+                  className="camera-preview"
+                  autoPlay
+                  muted
+                  playsInline
+                />
+                <canvas ref={canvasRef} className="camera-canvas" />
 
-              {sprite && (
-                <div className="sprite-slot">
-                  <div className="sprite-placeholder" aria-hidden="true" />
-                  <div className="sprite-text">
-                    <p className="sprite-line">{sprite.line}</p>
-                    {sprite.followup_prompt && (
-                      <p className="sprite-followup">{sprite.followup_prompt}</p>
-                    )}
+                {cameraStatus === 'requesting' ? (
+                  <div className="camera-overlay">
+                    <p className="camera-overlay-title">Opening camera...</p>
+                    <p className="camera-overlay-copy">
+                      Grant camera permission so we can capture what you have on hand.
+                    </p>
                   </div>
-                </div>
-              )}
+                ) : null}
 
-              <h2 className="panel-title">{recommendation.primary_recommendation}</h2>
-              <p className="panel-rationale">{recommendation.rationale}</p>
+                {cameraStatus === 'blocked' ? (
+                  <div className="camera-overlay">
+                    <p className="camera-overlay-title">Camera unavailable</p>
+                    <p className="camera-overlay-copy">
+                      {cameraError ??
+                        'We could not access your camera. Check your browser permissions and try again.'}
+                    </p>
+                  </div>
+                ) : null}
+              </div>
 
-              {recommendation.alternative_options?.length > 0 && (
-                <div className="result-row">
-                  <span className="result-label">Also good</span>
-                  <span className="result-value">
-                    {recommendation.alternative_options.join(' · ')}
-                  </span>
-                </div>
-              )}
-              {recommendation.foods_to_avoid?.length > 0 && (
-                <div className="result-row">
-                  <span className="result-label">Skip</span>
-                  <span className="result-value">
-                    {recommendation.foods_to_avoid.join(' · ')}
-                  </span>
-                </div>
-              )}
+              <div className="camera-actions">
+                <button
+                  type="button"
+                  className="camera-button camera-button-primary"
+                  onClick={handleCapture}
+                  disabled={cameraStatus !== 'ready'}
+                >
+                  Take Photo
+                </button>
+                <button
+                  type="button"
+                  className="camera-button"
+                  onClick={() => void startCamera()}
+                  disabled={cameraStatus === 'requesting'}
+                >
+                  Use Phone
+                </button>
+              </div>
 
-              {fridgeResult && fridgeResult.likely_meals?.length > 0 && (
-                <div className="result-row">
-                  <span className="result-label">From your fridge</span>
-                  <span className="result-value">
-                    {fridgeResult.likely_meals.map((m) => m.name).join(' · ')}
-                  </span>
-                </div>
-              )}
+              <p className="camera-footnote">
+                The meal suggestion agent is not implemented yet. After capture, you will land on a
+                placeholder results page where that agent will eventually live.
+              </p>
             </div>
-          )}
-        </section>
+          </section>
+        ) : null}
+
+        {currentPage === 'eat-in-results' ? (
+          <section className="flow-page">
+            <button
+              type="button"
+              className="back-button"
+              onClick={() => setCurrentPage('eat-in-camera')}
+            >
+              Back
+            </button>
+
+            <div className="flow-content results-layout">
+              <div className="results-main">
+                <p className="placeholder-kicker">Eat In Results</p>
+                <h1 className="placeholder-title">What you have on hand</h1>
+
+                {capturedPhoto ? (
+                  <div className="captured-photo-card">
+                    <img src={capturedPhoto} alt="Captured ingredients preview" className="captured-photo" />
+                  </div>
+                ) : null}
+
+                {analysisStage !== 'idle' && analysisStage !== 'done' && analysisStage !== 'error' ? (
+                  <p className="agent-copy" style={{ marginTop: 12 }}>
+                    {analysisStage === 'vision' && 'Scanning photo for ingredients…'}
+                    {analysisStage === 'fridge' && 'Cleaning up the ingredient list…'}
+                    {analysisStage === 'recommend' && 'Deciding the best meal for you…'}
+                    {analysisStage === 'sprite' && 'Orbit is thinking…'}
+                  </p>
+                ) : null}
+
+                {analysisStage === 'error' ? (
+                  <p className="agent-copy" style={{ color: '#c0392b', marginTop: 12 }}>
+                    {analysisError}
+                    <br />
+                    <button
+                      type="button"
+                      className="camera-button"
+                      style={{ marginTop: 8 }}
+                      onClick={() => capturedPhoto && void runAnalysis(capturedPhoto)}
+                    >
+                      Retry
+                    </button>
+                  </p>
+                ) : null}
+
+                {vision && vision.food_items.length > 0 ? (
+                  <div className="captured-photo-card" style={{ marginTop: 16, padding: 16 }}>
+                    <p className="agent-label">Detected ingredients</p>
+                    <ul style={{ margin: 0, paddingLeft: 18 }}>
+                      {vision.food_items.map((f, i) => (
+                        <li key={i} className="agent-copy">
+                          {f.name}
+                          {f.quantity ? ` — ${f.quantity}` : ''}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
+
+              <aside className="mascot-column">
+                <img src={stageOneMascot} alt="Stage 1 mascot" className="mascot-sprite mascot-sprite-panel" />
+
+                <div className="chat-bubble">
+                  <div className="chat-bubble-tail" aria-hidden="true" />
+                  <p className="agent-label">Orbit{sprite ? ` · ${sprite.mood}` : ''}</p>
+                  <p className="agent-copy">
+                    {sprite
+                      ? sprite.line
+                      : analysisStage === 'done'
+                        ? 'No response from Orbit.'
+                        : 'Orbit will react once we know what you have on hand.'}
+                  </p>
+                  {sprite?.followup_prompt ? (
+                    <p className="agent-copy" style={{ opacity: 0.75, marginTop: 8 }}>
+                      {sprite.followup_prompt}
+                    </p>
+                  ) : null}
+                </div>
+
+                <div className="store-panel">
+                  <p className="agent-label">Meal suggestion</p>
+                  {recommendation ? (
+                    <>
+                      <p className="agent-copy" style={{ fontWeight: 600 }}>
+                        {recommendation.primary_recommendation}
+                      </p>
+                      <p className="agent-copy">{recommendation.rationale}</p>
+                      {recommendation.alternative_options.length > 0 ? (
+                        <p className="agent-copy" style={{ marginTop: 8 }}>
+                          <strong>Alternatives:</strong>{' '}
+                          {recommendation.alternative_options.join(', ')}
+                        </p>
+                      ) : null}
+                      {recommendation.foods_to_avoid.length > 0 ? (
+                        <p className="agent-copy" style={{ marginTop: 4 }}>
+                          <strong>Avoid:</strong> {recommendation.foods_to_avoid.join(', ')}
+                        </p>
+                      ) : null}
+                    </>
+                  ) : (
+                    <p className="agent-copy">
+                      The meal agent will recommend something once the photo is analyzed.
+                    </p>
+                  )}
+                </div>
+              </aside>
+            </div>
+          </section>
+        ) : null}
+
+        {currentPage === 'eat-out-pick' ? (
+          <section className="flow-page">
+            <button type="button" className="back-button" onClick={() => setCurrentPage('welcome')}>
+              Back
+            </button>
+
+            <div className="flow-content">
+              <p className="placeholder-kicker">Eat Out Flow</p>
+              <h1 className="placeholder-title">Where are you right now?</h1>
+              <p className="placeholder-copy">
+                Pick the context that's closest — Orbit will coach you through the best play for this
+                spot.
+              </p>
+
+              <div className="action-grid action-grid-stacked" style={{ marginTop: 24 }}>
+                {locationOptions.map((opt) => (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    className="action-button action-button-compact"
+                    onClick={() => void runEatOut(opt.key)}
+                  >
+                    <span className="action-title">{opt.label}</span>
+                    <span className="action-description">{opt.description}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </section>
+        ) : null}
+
+        {currentPage === 'eat-out-results' ? (
+          <section className="flow-page">
+            <button
+              type="button"
+              className="back-button"
+              onClick={() => setCurrentPage('eat-out-pick')}
+            >
+              Back
+            </button>
+
+            <div className="flow-content results-layout">
+              <div className="results-main">
+                <p className="placeholder-kicker">Eat Out Results</p>
+                <h1 className="placeholder-title">Your coach's call</h1>
+
+                {analysisStage !== 'idle' && analysisStage !== 'done' && analysisStage !== 'error' ? (
+                  <p className="agent-copy" style={{ marginTop: 12 }}>
+                    {analysisStage === 'recommend' && 'Scanning nearby options…'}
+                    {analysisStage === 'sprite' && 'Orbit is thinking…'}
+                  </p>
+                ) : null}
+
+                {analysisStage === 'error' ? (
+                  <p className="agent-copy" style={{ color: '#c0392b', marginTop: 12 }}>
+                    {analysisError}
+                  </p>
+                ) : null}
+              </div>
+
+              <aside className="mascot-column">
+                <img src={stageOneMascot} alt="Stage 1 mascot" className="mascot-sprite mascot-sprite-panel" />
+
+                <div className="chat-bubble">
+                  <div className="chat-bubble-tail" aria-hidden="true" />
+                  <p className="agent-label">Orbit{sprite ? ` · ${sprite.mood}` : ''}</p>
+                  <p className="agent-copy">
+                    {sprite
+                      ? sprite.line
+                      : analysisStage === 'done'
+                        ? 'No response from Orbit.'
+                        : 'Your coach is warming up…'}
+                  </p>
+                  {sprite?.followup_prompt ? (
+                    <p className="agent-copy" style={{ opacity: 0.75, marginTop: 8 }}>
+                      {sprite.followup_prompt}
+                    </p>
+                  ) : null}
+                </div>
+
+                <div className="store-panel">
+                  <p className="agent-label">Meal suggestion</p>
+                  {recommendation ? (
+                    <>
+                      <p className="agent-copy" style={{ fontWeight: 600 }}>
+                        {recommendation.primary_recommendation}
+                      </p>
+                      <p className="agent-copy">{recommendation.rationale}</p>
+                      {recommendation.alternative_options.length > 0 ? (
+                        <p className="agent-copy" style={{ marginTop: 8 }}>
+                          <strong>Alternatives:</strong>{' '}
+                          {recommendation.alternative_options.join(', ')}
+                        </p>
+                      ) : null}
+                      {recommendation.foods_to_avoid.length > 0 ? (
+                        <p className="agent-copy" style={{ marginTop: 4 }}>
+                          <strong>Avoid:</strong> {recommendation.foods_to_avoid.join(', ')}
+                        </p>
+                      ) : null}
+                    </>
+                  ) : (
+                    <p className="agent-copy">Working on a recommendation…</p>
+                  )}
+                </div>
+              </aside>
+            </div>
+          </section>
+        ) : null}
       </main>
     </div>
   );
