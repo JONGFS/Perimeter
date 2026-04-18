@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import stageOneMascot from './assets/stage-1-mascot.png';
+import stageOneMascotFrameTwo from './assets/stage-1-mascot-frame-2.png';
 
 const homeActions = [
   {
@@ -9,33 +11,73 @@ const homeActions = [
   {
     title: 'Eat Out',
     description: 'Find a strong option on the go with guidance for menus, takeout, or quick stops.',
-    nextPage: 'welcome' as const,
+    nextPage: 'eat-out-intro' as const,
   },
 ];
 
-type Page = 'welcome' | 'eat-in-camera' | 'eat-in-results';
+type Page =
+  | 'welcome'
+  | 'eat-in-camera'
+  | 'eat-in-results'
+  | 'eat-out-intro'
+  | 'eat-out-results';
 type CameraStatus = 'idle' | 'requesting' | 'ready' | 'blocked' | 'captured';
+type LocationStatus = 'idle' | 'requesting' | 'granted' | 'blocked';
+
+function AnimatedMascot({ className }: { className: string }) {
+  return (
+    <div className={`mascot-animated ${className}`} aria-label="Stage 1 mascot animation" role="img">
+      <img src={stageOneMascot} alt="" aria-hidden="true" className="mascot-frame mascot-frame-one" />
+      <img
+        src={stageOneMascotFrameTwo}
+        alt=""
+        aria-hidden="true"
+        className="mascot-frame mascot-frame-two"
+      />
+    </div>
+  );
+}
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>('welcome');
   const [cameraStatus, setCameraStatus] = useState<CameraStatus>('idle');
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
+  const [showCameraSettings, setShowCameraSettings] = useState(false);
+  const [availableDevices, setAvailableDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
+  const [locationStatus, setLocationStatus] = useState<LocationStatus>('idle');
+  const [locationError, setLocationError] = useState<string | null>(null);
+  const [locationLabel, setLocationLabel] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  // Ref keeps the selected device ID fresh inside async closures and effects
+  const selectedDeviceIdRef = useRef<string | null>(null);
 
   const stopCamera = () => {
-    if (!streamRef.current) {
-      return;
-    }
-
+    if (!streamRef.current) return;
     streamRef.current.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
   };
 
-  const startCamera = async () => {
+  const loadDevices = async () => {
+    try {
+      const all = await navigator.mediaDevices.enumerateDevices();
+      setAvailableDevices(all.filter((d) => d.kind === 'videoinput'));
+    } catch {
+      // enumerateDevices not supported — settings panel will show empty
+    }
+  };
+
+  const openSettings = async () => {
+    setShowCameraSettings((v) => !v);
+    // Refresh device list every time the panel opens so new devices appear
+    await loadDevices();
+  };
+
+  const startCamera = async (deviceId?: string) => {
     if (!navigator.mediaDevices?.getUserMedia) {
       setCameraStatus('blocked');
       setCameraError('Camera access is not supported in this browser.');
@@ -46,13 +88,29 @@ export default function App() {
     setCameraStatus('requesting');
     setCameraError(null);
 
+    // Prefer explicit arg, then ref (always fresh), then default
+    const activeDeviceId = deviceId ?? selectedDeviceIdRef.current;
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' } },
+        // Use `ideal` (not `exact`) so it falls back gracefully if the device
+        // is temporarily unavailable (e.g. right after stopping Continuity Camera)
+        video: activeDeviceId
+          ? { deviceId: { ideal: activeDeviceId } }
+          : { facingMode: { ideal: 'environment' } },
         audio: false,
       });
 
       streamRef.current = stream;
+
+      // When the device disconnects (e.g. iPhone walks away), fall back to webcam
+      stream.getVideoTracks()[0]?.addEventListener('ended', () => {
+        if (streamRef.current === stream) {
+          selectedDeviceIdRef.current = null;
+          setSelectedDeviceId(null);
+          void startCamera();
+        }
+      });
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -60,6 +118,8 @@ export default function App() {
       }
 
       setCameraStatus('ready');
+      // Labels are only available after permission is granted
+      await loadDevices();
     } catch (error) {
       setCameraStatus('blocked');
       setCameraError(
@@ -68,6 +128,13 @@ export default function App() {
           : 'Camera permission was denied or the device camera is unavailable.',
       );
     }
+  };
+
+  const handleSelectDevice = async (deviceId: string) => {
+    selectedDeviceIdRef.current = deviceId;
+    setSelectedDeviceId(deviceId);
+    setShowCameraSettings(false);
+    await startCamera(deviceId);
   };
 
   const handleCapture = () => {
@@ -101,6 +168,32 @@ export default function App() {
     setCurrentPage('eat-in-results');
   };
 
+  const requestLocationRecommendations = () => {
+    if (!navigator.geolocation) {
+      setLocationStatus('blocked');
+      setLocationError('Location access is not supported in this browser.');
+      return;
+    }
+
+    setLocationStatus('requesting');
+    setLocationError(null);
+
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        setLocationStatus('granted');
+        setLocationLabel(
+          `Lat ${coords.latitude.toFixed(3)}, Lng ${coords.longitude.toFixed(3)}`,
+        );
+        setCurrentPage('eat-out-results');
+      },
+      (error) => {
+        setLocationStatus('blocked');
+        setLocationError(error.message || 'Location permission was denied.');
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
+    );
+  };
+
   useEffect(() => {
     if (currentPage === 'eat-in-camera') {
       void startCamera();
@@ -128,23 +221,27 @@ export default function App() {
               Small, smart food decisions for the part of your day you are in right now.
             </p>
 
-            <div className="question-bubble">
-              <div className="bubble-tail" aria-hidden="true" />
-              <p className="question-label">What would you like to do today?</p>
+            <div className="hero-speaker">
+              <div className="question-bubble">
+                <div className="bubble-tail" aria-hidden="true" />
+                <p className="question-label">What would you like to do today?</p>
 
-              <div className="action-grid action-grid-stacked">
-                {homeActions.map((action) => (
-                  <button
-                    key={action.title}
-                    type="button"
-                    className="action-button action-button-compact"
-                    onClick={() => setCurrentPage(action.nextPage)}
-                  >
-                    <span className="action-title">{action.title}</span>
-                    <span className="action-description">{action.description}</span>
-                  </button>
-                ))}
+                <div className="action-grid action-grid-stacked">
+                  {homeActions.map((action) => (
+                    <button
+                      key={action.title}
+                      type="button"
+                      className="action-button action-button-compact"
+                      onClick={() => setCurrentPage(action.nextPage)}
+                    >
+                      <span className="action-title">{action.title}</span>
+                      <span className="action-description">{action.description}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
+
+              <AnimatedMascot className="mascot-sprite mascot-sprite-large" />
             </div>
           </section>
         ) : null}
@@ -196,21 +293,51 @@ export default function App() {
               <div className="camera-actions">
                 <button
                   type="button"
-                  className="camera-button"
-                  onClick={() => void startCamera()}
-                  disabled={cameraStatus === 'requesting'}
-                >
-                  {cameraStatus === 'ready' ? 'Restart Camera' : 'Open Camera'}
-                </button>
-                <button
-                  type="button"
                   className="camera-button camera-button-primary"
                   onClick={handleCapture}
                   disabled={cameraStatus !== 'ready'}
                 >
-                  Take Picture
+                  Take Photo
+                </button>
+                <button
+                  type="button"
+                  className="camera-button"
+                  onClick={() => void openSettings()}
+                  aria-expanded={showCameraSettings}
+                >
+                  Camera Settings
                 </button>
               </div>
+
+              {showCameraSettings ? (
+                <div className="camera-settings-panel">
+                  <p className="camera-settings-title">Vision Device</p>
+                  <p className="camera-settings-hint">
+                    On Mac, connect your iPhone via Continuity Camera (Bluetooth + WiFi) and it
+                    will appear below as a selectable device.
+                  </p>
+                  {availableDevices.length === 0 ? (
+                    <p className="camera-settings-empty">
+                      No devices found. Grant camera permission first.
+                    </p>
+                  ) : (
+                    <ul className="camera-device-list">
+                      {availableDevices.map((device, i) => (
+                        <li key={device.deviceId}>
+                          <button
+                            type="button"
+                            className={`camera-device-item${selectedDeviceId === device.deviceId ? ' camera-device-item-active' : ''}`}
+                            onClick={() => void handleSelectDevice(device.deviceId)}
+                          >
+                            {device.label || `Camera ${i + 1}`}
+                            {selectedDeviceId === device.deviceId ? ' ✓' : ''}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ) : null}
 
               <p className="camera-footnote">
                 The meal suggestion agent is not implemented yet. After capture, you will land on a
@@ -248,16 +375,10 @@ export default function App() {
               </div>
 
               <aside className="mascot-column">
-                <div className="mascot-placeholder">
-                  <p className="agent-label">Mascot Placeholder</p>
-                  <p className="agent-copy">
-                    A future pixel mascot will live here. It will be the one delivering meal
-                    suggestions, reacting to food decisions, and showing progress in the gamified
-                    experience.
-                  </p>
-                </div>
+                <AnimatedMascot className="mascot-sprite mascot-sprite-panel" />
 
-                <div className="chat-placeholder">
+                <div className="chat-bubble">
+                  <div className="chat-bubble-tail" aria-hidden="true" />
                   <p className="agent-label">Chat Box Placeholder</p>
                   <p className="agent-copy">
                     This will become the mascot-connected text area where the user sees suggestions
@@ -265,13 +386,92 @@ export default function App() {
                   </p>
                 </div>
 
-                <div className="store-placeholder">
+                <div className="store-panel">
                   <p className="agent-label">Nearby Supermarkets Placeholder</p>
                   <p className="agent-copy">
                     This section will list supermarkets near the user, along with their locations,
                     so we can suggest where to pick up missing ingredients.
                   </p>
                 </div>
+              </aside>
+            </div>
+          </section>
+        ) : null}
+
+        {currentPage === 'eat-out-intro' ? (
+          <section className="flow-page">
+            <button type="button" className="back-button" onClick={() => setCurrentPage('welcome')}>
+              Back
+            </button>
+
+            <div className="flow-content eat-out-layout">
+              <div className="eat-out-bubble">
+                <div className="bubble-tail" aria-hidden="true" />
+                <p className="question-label">
+                  Please enable location access so that I can recommend you the best restaurants in
+                  the area.
+                </p>
+
+                <button
+                  type="button"
+                  className="action-button action-button-compact"
+                  onClick={requestLocationRecommendations}
+                  disabled={locationStatus === 'requesting'}
+                >
+                  <span className="action-title">Give Me Recommendations</span>
+                  <span className="action-description">
+                    I&apos;ll use your location to build a nearby restaurant list.
+                  </span>
+                </button>
+
+                {locationStatus === 'requesting' ? (
+                  <p className="status-copy">Requesting your location now...</p>
+                ) : null}
+
+                {locationStatus === 'blocked' && locationError ? (
+                  <p className="status-copy">{locationError}</p>
+                ) : null}
+              </div>
+
+              <AnimatedMascot className="mascot-sprite mascot-sprite-large" />
+            </div>
+          </section>
+        ) : null}
+
+        {currentPage === 'eat-out-results' ? (
+          <section className="flow-page">
+            <button
+              type="button"
+              className="back-button"
+              onClick={() => setCurrentPage('eat-out-intro')}
+            >
+              Back
+            </button>
+
+            <div className="flow-content results-layout eat-out-results-layout">
+              <div className="results-main eat-out-results-main">
+                <p className="placeholder-kicker">Eat Out Results</p>
+                <h1 className="placeholder-title">Nearby restaurant picks</h1>
+                <p className="placeholder-copy">
+                  {locationLabel
+                    ? `Using ${locationLabel} as a placeholder location, the mascot will eventually recommend restaurants near you.`
+                    : 'Once location access is granted, the mascot will recommend restaurants near you.'}
+                </p>
+
+                <div className="chat-bubble eat-out-chat-bubble">
+                  <div className="chat-bubble-tail" aria-hidden="true" />
+                  <p className="agent-label">Restaurant Recommendations Placeholder</p>
+                  <p className="agent-copy">
+                    I found a few nearby spots you could try:
+                  </p>
+                  <p className="agent-copy">Green Lantern Cafe, 0.6 miles away</p>
+                  <p className="agent-copy">Sprout Kitchen, 1.1 miles away</p>
+                  <p className="agent-copy">Sunny Bowl House, 1.8 miles away</p>
+                </div>
+              </div>
+
+              <aside className="mascot-column eat-out-mascot-column">
+                <AnimatedMascot className="mascot-sprite mascot-sprite-panel" />
               </aside>
             </div>
           </section>
