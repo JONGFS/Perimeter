@@ -6,6 +6,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 import PIL.Image
 import google.genai as genai
+import asyncio
 
 # Load environment variables
 load_dotenv()
@@ -39,26 +40,20 @@ def image_to_base64(image_input: Union[str, PIL.Image.Image]) -> str:
 def extract_items_from_image(image_input: Union[str, PIL.Image.Image, bytes]) -> dict:
     """
     Extract items and their quantities from image using Gemini.
-    
+
     Args:
         image_input: Image file path, PIL Image object, or bytes
-    
+
     Returns:
         Dict with extracted items and quantities
     """
-    # Handle different input types
     if isinstance(image_input, str):
         img = PIL.Image.open(image_input)
     elif isinstance(image_input, bytes):
         img = PIL.Image.open(io.BytesIO(image_input))
     else:
         img = image_input
-    
-    # Convert PIL image to bytes for the API
-    img_byte_arr = io.BytesIO()
-    img.save(img_byte_arr, format='PNG')
-    image_bytes = img_byte_arr.getvalue()
-    
+
     prompt = """Analyze this image and extract the following information:
 1. List all visible items/objects
 2. For each item, provide the quantity if visible
@@ -66,12 +61,12 @@ def extract_items_from_image(image_input: Union[str, PIL.Image.Image, bytes]) ->
 4. List any labels or text visible in the image
 
 Return the data in a structured format."""
-    
+
     response = client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-2.5-flash",
         contents=[
             prompt,
-            {"mime_type": "image/png", "data": image_bytes}
+            img
         ],
     )
     return {
@@ -83,26 +78,20 @@ Return the data in a structured format."""
 def analyze_nutrition_macros(image_input: Union[str, PIL.Image.Image, bytes]) -> dict:
     """
     Analyze nutritional information and macros from food image.
-    
+
     Args:
         image_input: Image file path, PIL Image object, or bytes
-    
+
     Returns:
         Dict with macro analysis (protein, carbs, fats, calories)
     """
-    # Handle different input types
     if isinstance(image_input, str):
         img = PIL.Image.open(image_input)
     elif isinstance(image_input, bytes):
         img = PIL.Image.open(io.BytesIO(image_input))
     else:
         img = image_input
-    
-    # Convert PIL image to bytes for the API
-    img_byte_arr = io.BytesIO()
-    img.save(img_byte_arr, format='PNG')
-    image_bytes = img_byte_arr.getvalue()
-    
+
     prompt = """Analyze the food in this image and provide:
 1. Food identification and portion size estimation
 2. Estimated macronutrients:
@@ -114,12 +103,12 @@ def analyze_nutrition_macros(image_input: Union[str, PIL.Image.Image, bytes]) ->
 4. Confidence level (high/medium/low)
 
 Format as JSON if possible."""
-    
+
     response = client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-2.5-flash",
         contents=[
             prompt,
-            {"mime_type": "image/png", "data": image_bytes}
+            img
         ],
     )
     return {
@@ -128,19 +117,19 @@ Format as JSON if possible."""
     }
 
 
-def process_image(
+async def process_image_async(
     image_input: Union[str, PIL.Image.Image, bytes],
     extract_items: bool = True,
     analyze_macros: bool = True
 ) -> dict:
     """
-    Full image processing pipeline.
-    
+    Full image processing pipeline (async).
+
     Args:
         image_input: Image file path, PIL Image object, or bytes from frontend
         extract_items: Whether to extract items
         analyze_macros: Whether to analyze nutrition macros
-    
+
     Returns:
         Dict with all analysis results
     """
@@ -150,20 +139,38 @@ def process_image(
         "macros": None,
         "error": None
     }
-    
+
     try:
+        tasks = []
+
         if extract_items:
-            results["items"] = extract_items_from_image(image_input)
-        
+            tasks.append(asyncio.to_thread(extract_items_from_image, image_input))
+
         if analyze_macros:
-            results["macros"] = analyze_nutrition_macros(image_input)
-        
+            tasks.append(asyncio.to_thread(analyze_nutrition_macros, image_input))
+
+        responses = await asyncio.gather(*tasks)
+
+        if extract_items:
+            results["items"] = responses[0]
+        if analyze_macros:
+            results["macros"] = responses[1 if extract_items else 0]
+
         results["success"] = True
-        
+
     except Exception as e:
         results["error"] = str(e)
 
     return results
+
+
+def process_image(
+    image_input: Union[str, PIL.Image.Image, bytes],
+    extract_items: bool = True,
+    analyze_macros: bool = True
+) -> dict:
+    """Synchronous wrapper for process_image_async."""
+    return asyncio.run(process_image_async(image_input, extract_items, analyze_macros))
 
 
 if __name__ == "__main__":
@@ -185,9 +192,37 @@ if __name__ == "__main__":
 
     results = process_image(image_path)
 
-    print("Results:")
-    print(json.dumps(results, indent=2))
-
     if results["error"]:
-        print(f"\nError: {results['error']}")
+        print(f"Error: {results['error']}")
         sys.exit(1)
+
+    print("=" * 60)
+    print("ITEMS EXTRACTED")
+    print("=" * 60)
+    if results["items"]:
+        print(results["items"]["extraction"])
+
+    print("\n" + "=" * 60)
+    print("NUTRITIONAL ANALYSIS")
+    print("=" * 60)
+    if results["macros"]:
+        macros_text = results["macros"]["macros"]
+        try:
+            json_start = macros_text.find('{')
+            json_end = macros_text.rfind('}') + 1
+            if json_start >= 0 and json_end > json_start:
+                macros_json = json.loads(macros_text[json_start:json_end])
+                analysis = macros_json.get("analysis", {})
+                macros = analysis.get("estimated_macronutrients", {})
+                print(f"Calories: {analysis.get('estimated_calories', 'N/A')}")
+                print(f"Protein: {macros.get('protein_grams', 'N/A')}g")
+                print(f"Carbs: {macros.get('carbohydrates_grams', 'N/A')}g")
+                print(f"Fats: {macros.get('fats_grams', 'N/A')}g")
+                print(f"Fiber: {macros.get('fiber_grams', 'N/A')}g")
+                print(f"Confidence: {analysis.get('confidence_level', 'N/A')}")
+                if analysis.get("notes"):
+                    print(f"\nNotes: {analysis['notes']}")
+            else:
+                print(results["macros"]["macros"])
+        except (json.JSONDecodeError, AttributeError):
+            print(results["macros"]["macros"])
