@@ -13,9 +13,9 @@ const MAX_DISTANCE_M: Record<Intent, number> = {
 };
 
 const EAT_OUT_TYPE_FIT: Record<string, number> = {
-  Restaurant: 1,
-  Cafe: 0.7,
-  'Fast Food': 0.85,
+  Cafe: 1,
+  Restaurant: 0.75,
+  'Fast Food': 0.2,
 };
 
 const COOK_TYPE_FIT: Record<string, number> = {
@@ -27,7 +27,7 @@ const COOK_TYPE_FIT: Record<string, number> = {
 const REASONS: Record<string, string> = {
   distance: 'closest option to you',
   open_now: 'open right now',
-  type_fit: 'best match for what you want',
+  type_fit: 'healthier option nearby',
   rating: 'highest rated nearby',
   price_fit: 'best fit for your budget',
   category_match: 'best store for a full grocery run',
@@ -53,11 +53,11 @@ function score(place: Place, intent: Intent, filters: Filters): { score: number;
   if (intent === 'eat_out') {
     const typeFit = EAT_OUT_TYPE_FIT[place.type] ?? 0.6;
     components = [
-      { key: 'distance', weight: 0.30, value: distNorm },
-      { key: 'open_now', weight: 0.20, value: openNow },
-      { key: 'type_fit', weight: 0.20, value: typeFit },
-      { key: 'rating', weight: 0.15, value: ratingNorm },
-      { key: 'price_fit', weight: 0.15, value: priceFit(place.price, filters.budget) },
+      { key: 'distance', weight: 0.40, value: distNorm },
+      { key: 'type_fit', weight: 0.30, value: typeFit },
+      { key: 'open_now', weight: 0.15, value: openNow },
+      { key: 'rating', weight: 0.10, value: ratingNorm },
+      { key: 'price_fit', weight: 0.05, value: priceFit(place.price, filters.budget) },
     ];
   } else {
     const categoryMatch = COOK_TYPE_FIT[place.type] ?? 0.5;
