@@ -47,28 +47,6 @@ class ImageAnalysisResponse(BaseModel):
     macros: dict = None
     error: str = None
 
-# Original routes
-@app.get("/api/health", response_model=HealthResponse)
-async def health_check():
-    return {
-        "status": "ok",
-        "timestamp": datetime.utcnow().isoformat() + "Z"
-    }
-
-@app.get("/api/items", response_model=list[ItemResponse])
-async def get_items():
-    return [
-        {"id": 1, "name": "Item One"},
-        {"id": 2, "name": "Item Two"},
-    ]
-
-@app.post("/api/items", response_model=ItemResponse, status_code=201)
-async def create_item(item: Item):
-    return {
-        "id": int(datetime.utcnow().timestamp() * 1000),
-        "name": item.name
-    }
-
 # Image processing routes
 @app.post("/api/images/analyze", response_model=ImageAnalysisResponse)
 async def analyze_image(request: ImageAnalysisRequest):

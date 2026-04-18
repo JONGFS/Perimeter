@@ -5,7 +5,7 @@ from typing import Union
 from pathlib import Path
 from dotenv import load_dotenv
 import PIL.Image
-import google.generativeai as genai
+import google.genai as genai
 
 # Load environment variables
 load_dotenv()
@@ -13,7 +13,7 @@ load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Configure the Generative AI API
-genai.configure(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 
 def base64_to_image(base64_string: str) -> PIL.Image.Image:
@@ -46,8 +46,6 @@ def extract_items_from_image(image_input: Union[str, PIL.Image.Image, bytes]) ->
     Returns:
         Dict with extracted items and quantities
     """
-    model = genai.GenerativeModel(model_name="gemini-1.5-flash")
-    
     # Handle different input types
     if isinstance(image_input, str):
         img = PIL.Image.open(image_input)
@@ -55,6 +53,11 @@ def extract_items_from_image(image_input: Union[str, PIL.Image.Image, bytes]) ->
         img = PIL.Image.open(io.BytesIO(image_input))
     else:
         img = image_input
+    
+    # Convert PIL image to bytes for the API
+    img_byte_arr = io.BytesIO()
+    img.save(img_byte_arr, format='PNG')
+    image_bytes = img_byte_arr.getvalue()
     
     prompt = """Analyze this image and extract the following information:
 1. List all visible items/objects
@@ -64,7 +67,13 @@ def extract_items_from_image(image_input: Union[str, PIL.Image.Image, bytes]) ->
 
 Return the data in a structured format."""
     
-    response = model.generate_content([prompt, img])
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=[
+            prompt,
+            {"mime_type": "image/png", "data": image_bytes}
+        ],
+    )
     return {
         "extraction": response.text,
         "success": True
@@ -81,8 +90,6 @@ def analyze_nutrition_macros(image_input: Union[str, PIL.Image.Image, bytes]) ->
     Returns:
         Dict with macro analysis (protein, carbs, fats, calories)
     """
-    model = genai.GenerativeModel(model_name="gemini-1.5-flash")
-    
     # Handle different input types
     if isinstance(image_input, str):
         img = PIL.Image.open(image_input)
@@ -90,6 +97,11 @@ def analyze_nutrition_macros(image_input: Union[str, PIL.Image.Image, bytes]) ->
         img = PIL.Image.open(io.BytesIO(image_input))
     else:
         img = image_input
+    
+    # Convert PIL image to bytes for the API
+    img_byte_arr = io.BytesIO()
+    img.save(img_byte_arr, format='PNG')
+    image_bytes = img_byte_arr.getvalue()
     
     prompt = """Analyze the food in this image and provide:
 1. Food identification and portion size estimation
@@ -103,7 +115,13 @@ def analyze_nutrition_macros(image_input: Union[str, PIL.Image.Image, bytes]) ->
 
 Format as JSON if possible."""
     
-    response = model.generate_content([prompt, img])
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=[
+            prompt,
+            {"mime_type": "image/png", "data": image_bytes}
+        ],
+    )
     return {
         "macros": response.text,
         "success": True
@@ -144,5 +162,32 @@ def process_image(
         
     except Exception as e:
         results["error"] = str(e)
-    
+
     return results
+
+
+if __name__ == "__main__":
+    import sys
+    import json
+
+    if len(sys.argv) < 2:
+        print("Usage: python vision.py <image_path>")
+        print("Example: python vision.py /path/to/fridge.jpg")
+        sys.exit(1)
+
+    image_path = sys.argv[1]
+
+    if not Path(image_path).exists():
+        print(f"Error: Image file not found: {image_path}")
+        sys.exit(1)
+
+    print(f"Processing image: {image_path}\n")
+
+    results = process_image(image_path)
+
+    print("Results:")
+    print(json.dumps(results, indent=2))
+
+    if results["error"]:
+        print(f"\nError: {results['error']}")
+        sys.exit(1)
