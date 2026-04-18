@@ -258,6 +258,28 @@ body::before {
   text-align: center;
 }
 
+.eat-out-layout {
+  width: min(100%, 52rem);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(9rem, 11rem);
+  gap: 0.55rem;
+  align-items: end;
+  justify-content: center;
+}
+
+.eat-out-bubble {
+  position: relative;
+  width: 100%;
+  padding: 1.6rem;
+  text-align: left;
+  background: linear-gradient(180deg, var(--cream) 0%, var(--cream-deep) 100%);
+  border: 4px solid var(--pixel-shadow);
+  border-radius: 0;
+  box-shadow:
+    0 0 0 4px rgba(255, 248, 216, 0.18),
+    8px 8px 0 rgba(36, 68, 36, 0.3);
+}
+
 .placeholder-kicker {
   margin: 0 0 1rem;
   font-family: 'Press Start 2P', cursive;
@@ -370,12 +392,98 @@ body::before {
   color: #efffe7;
 }
 
+.camera-settings-panel {
+  width: min(100%, 36rem);
+  margin: 0.9rem auto 0;
+  padding: 1.1rem 1.25rem;
+  text-align: left;
+  background: linear-gradient(180deg, var(--cream) 0%, var(--cream-deep) 100%);
+  border: 4px solid var(--pixel-shadow);
+  box-shadow: 6px 6px 0 rgba(36, 68, 36, 0.28);
+  animation: rise 0.2s steps(4, end) forwards;
+}
+
+.camera-settings-title {
+  margin: 0 0 0.5rem;
+  font-family: 'Press Start 2P', cursive;
+  font-size: 0.72rem;
+  color: var(--leaf-3);
+}
+
+.camera-settings-hint {
+  margin: 0 0 0.9rem;
+  font-size: 0.88rem;
+  line-height: 1.65;
+  color: var(--ink-soft);
+}
+
+.camera-settings-empty {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
+.camera-device-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.camera-device-item {
+  appearance: none;
+  width: 100%;
+  padding: 0.7rem 0.9rem;
+  text-align: left;
+  font-family: 'Nunito', sans-serif;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--ink);
+  background: linear-gradient(180deg, #fffef6 0%, #e8fbc8 100%);
+  border: 3px solid var(--pixel-shadow);
+  cursor: pointer;
+  box-shadow: 3px 3px 0 rgba(36, 68, 36, 0.22);
+  transition: transform 0.1s steps(2, end);
+}
+
+.camera-device-item:hover {
+  transform: translate(-1px, -1px);
+}
+
+.camera-device-item-active {
+  background: linear-gradient(180deg, #ffd85f 0%, #ff9964 100%);
+}
+
+.status-copy {
+  margin: 1rem 0 0;
+  color: var(--ink);
+  line-height: 1.7;
+}
+
 .results-layout {
   width: min(100%, 72rem);
   display: grid;
   grid-template-columns: minmax(0, 1.25fr) minmax(18rem, 0.9fr);
   gap: 1.4rem;
   align-items: start;
+}
+
+.eat-out-results-layout {
+  width: fit-content;
+  max-width: 100%;
+  align-items: start;
+  grid-template-columns: fit-content(38rem) fit-content(9rem);
+  justify-content: center;
+  gap: 0;
+}
+
+.eat-out-results-main {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  align-content: start;
 }
 
 .results-main {
@@ -401,6 +509,13 @@ body::before {
   padding-top: 0.2rem;
 }
 
+.eat-out-mascot-column {
+  justify-items: center;
+  align-self: start;
+  padding-top: 11.2rem;
+  margin-left: -0.6rem;
+}
+
 .mascot-sprite {
   display: block;
   image-rendering: pixelated;
@@ -424,6 +539,21 @@ body::before {
   padding: 1rem 1.05rem;
   text-align: left;
   background: linear-gradient(180deg, rgba(255, 248, 216, 0.96), rgba(141, 243, 165, 0.84));
+}
+
+.eat-out-chat-bubble {
+  margin-top: 1.6rem;
+  max-width: 38rem;
+  text-align: center;
+}
+
+.eat-out-chat-bubble .chat-bubble-tail {
+  right: -1rem;
+  top: 1.2rem;
+  border-top: 0;
+  border-bottom: 4px solid var(--pixel-shadow);
+  border-right: 4px solid var(--pixel-shadow);
+  box-shadow: 4px 4px 0 rgba(36, 68, 36, 0.3);
 }
 
 .chat-bubble-tail {
@@ -491,6 +621,11 @@ body::before {
     justify-items: center;
   }
 
+  .eat-out-layout {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+
   .bubble-tail {
     right: auto;
     left: 1.75rem;
@@ -505,6 +640,26 @@ body::before {
 
   .mascot-column {
     justify-items: center;
+  }
+
+  .eat-out-results-main {
+    justify-items: center;
+  }
+
+  .eat-out-mascot-column {
+    padding-top: 0;
+    margin-left: 0;
+  }
+
+  .eat-out-chat-bubble .chat-bubble-tail {
+    right: -1rem;
+    left: auto;
+    top: 1.2rem;
+    border-left: 0;
+    border-top: 0;
+    border-bottom: 4px solid var(--pixel-shadow);
+    border-right: 4px solid var(--pixel-shadow);
+    box-shadow: 4px 4px 0 rgba(36, 68, 36, 0.3);
   }
 
   .chat-bubble,
@@ -534,6 +689,10 @@ body::before {
   }
 
   .question-bubble {
+    padding: 1.2rem;
+  }
+
+  .eat-out-bubble {
     padding: 1.2rem;
   }
 

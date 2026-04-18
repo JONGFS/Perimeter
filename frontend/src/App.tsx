@@ -2,43 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import stageOneMascot from './assets/stage-1-mascot.png';
 import { api } from './api/client';
 
-type VisionFoodItem = {
-  name: string;
-  quantity?: string | null;
-  portion_size?: string | null;
-};
-
-type VisionResult = {
-  success: boolean;
-  food_items: VisionFoodItem[];
-  visible_labels?: string[];
-  non_food_items?: string[];
-  confidence?: string;
-  notes?: string | null;
-  error?: string | null;
-};
-
-type FridgeResult = {
-  ingredients_detected: { name: string; category?: string; confidence?: number }[];
-  likely_meals: { name: string; ingredients_used: string[]; effort: string; notes?: string }[];
-};
-
-type Recommendation = {
-  recommendation_type: string;
-  primary_recommendation: string;
-  alternative_options: string[];
-  foods_to_avoid: string[];
-  rationale: string;
-  nutrition_goal_fit: string;
-  constraints_considered: string[];
-};
-
-type SpriteLine = {
-  line: string;
-  mood: string;
-  followup_prompt?: string;
-};
-
 const homeActions = [
   {
     title: 'Eat In',
@@ -48,50 +11,109 @@ const homeActions = [
   {
     title: 'Eat Out',
     description: 'Find a strong option on the go with guidance for menus, takeout, or quick stops.',
-    nextPage: 'eat-out-pick' as const,
+    nextPage: 'eat-out-intro' as const,
   },
 ];
 
-type LocationContext = 'airport' | 'campus' | 'downtown' | 'suburb' | 'home' | 'other';
-type Page = 'welcome' | 'eat-in-camera' | 'eat-in-results' | 'eat-out-pick' | 'eat-out-results';
-
-const locationOptions: { key: LocationContext; label: string; description: string }[] = [
-  { key: 'airport', label: 'Airport', description: 'Gates, food courts, limited but scannable.' },
-  { key: 'campus', label: 'Campus', description: 'Dining halls, cafes, quick grab-and-go.' },
-  { key: 'downtown', label: 'Downtown', description: 'Restaurants, takeout, coffee shops.' },
-  { key: 'suburb', label: 'Suburb', description: 'Chains, drive-thru, supermarket deli.' },
-  { key: 'other', label: 'Somewhere else', description: 'Whatever is within reach.' },
-];
+type Page =
+  | 'welcome'
+  | 'eat-in-camera'
+  | 'eat-in-results'
+  | 'eat-out-intro'
+  | 'eat-out-results';
 type CameraStatus = 'idle' | 'requesting' | 'ready' | 'blocked' | 'captured';
+type LocationStatus = 'idle' | 'requesting' | 'granted' | 'blocked';
+type AnalysisStage = 'idle' | 'vision' | 'fridge' | 'recommend' | 'sprite' | 'done' | 'error';
+
+type VisionFoodItem = {
+  name: string;
+  quantity?: string | null;
+  category?: string | null;
+  confidence?: number | null;
+};
+
+type VisionResult = {
+  success: boolean;
+  food_items?: VisionFoodItem[];
+  error?: string | null;
+};
+
+type FridgeResult = {
+  ingredients_detected?: { name: string; category?: string; confidence?: number }[];
+  likely_meals?: { name: string; ingredients_used?: string[]; effort?: string; notes?: string }[];
+  missing_ingredients?: { meal: string; need?: string[]; impact?: string }[];
+  perishability_priority?: string[];
+};
+
+type Recommendation = {
+  recommendation_type?: string;
+  primary_recommendation?: string;
+  alternative_options?: string[];
+  foods_to_avoid?: string[];
+  rationale?: string;
+  nutrition_goal_fit?: string;
+  constraints_considered?: string[];
+};
+
+type SpriteLine = {
+  line?: string;
+  mood?: string;
+  followup_prompt?: string;
+};
+
+const DEFAULT_PREFERENCES = {
+  goals: ['balanced'],
+  dietary_restrictions: [],
+  budget_usd: null as number | null,
+  time_minutes: null as number | null,
+};
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>('welcome');
   const [cameraStatus, setCameraStatus] = useState<CameraStatus>('idle');
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
+  const [showCameraSettings, setShowCameraSettings] = useState(false);
+  const [availableDevices, setAvailableDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
+  const [locationStatus, setLocationStatus] = useState<LocationStatus>('idle');
+  const [locationError, setLocationError] = useState<string | null>(null);
+  const [locationLabel, setLocationLabel] = useState<string | null>(null);
 
-  const [analysisStage, setAnalysisStage] = useState<
-    'idle' | 'vision' | 'fridge' | 'recommend' | 'sprite' | 'done' | 'error'
-  >('idle');
+  // Agent pipeline state
+  const [analysisStage, setAnalysisStage] = useState<AnalysisStage>('idle');
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [vision, setVision] = useState<VisionResult | null>(null);
+  const [fridge, setFridge] = useState<FridgeResult | null>(null);
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
   const [sprite, setSprite] = useState<SpriteLine | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const selectedDeviceIdRef = useRef<string | null>(null);
 
   const stopCamera = () => {
-    if (!streamRef.current) {
-      return;
-    }
-
+    if (!streamRef.current) return;
     streamRef.current.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
   };
 
-  const startCamera = async () => {
+  const loadDevices = async () => {
+    try {
+      const all = await navigator.mediaDevices.enumerateDevices();
+      setAvailableDevices(all.filter((d) => d.kind === 'videoinput'));
+    } catch {
+      // enumerateDevices not supported — settings panel will show empty
+    }
+  };
+
+  const openSettings = async () => {
+    setShowCameraSettings((v) => !v);
+    await loadDevices();
+  };
+
+  const startCamera = async (deviceId?: string) => {
     if (!navigator.mediaDevices?.getUserMedia) {
       setCameraStatus('blocked');
       setCameraError('Camera access is not supported in this browser.');
@@ -102,13 +124,25 @@ export default function App() {
     setCameraStatus('requesting');
     setCameraError(null);
 
+    const activeDeviceId = deviceId ?? selectedDeviceIdRef.current;
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' } },
+        video: activeDeviceId
+          ? { deviceId: { ideal: activeDeviceId } }
+          : { facingMode: { ideal: 'environment' } },
         audio: false,
       });
 
       streamRef.current = stream;
+
+      stream.getVideoTracks()[0]?.addEventListener('ended', () => {
+        if (streamRef.current === stream) {
+          selectedDeviceIdRef.current = null;
+          setSelectedDeviceId(null);
+          void startCamera();
+        }
+      });
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -116,6 +150,7 @@ export default function App() {
       }
 
       setCameraStatus('ready');
+      await loadDevices();
     } catch (error) {
       setCameraStatus('blocked');
       setCameraError(
@@ -126,67 +161,45 @@ export default function App() {
     }
   };
 
-  const handleCapture = () => {
-    if (!videoRef.current || !canvasRef.current) {
-      return;
-    }
-
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    const width = video.videoWidth;
-    const height = video.videoHeight;
-
-    if (!width || !height) {
-      return;
-    }
-
-    canvas.width = width;
-    canvas.height = height;
-
-    const context = canvas.getContext('2d');
-    if (!context) {
-      return;
-    }
-
-    context.drawImage(video, 0, 0, width, height);
-    const imageData = canvas.toDataURL('image/jpeg', 0.92);
-
-    setCapturedPhoto(imageData);
-    setCameraStatus('captured');
-    stopCamera();
-    setVision(null);
-    setRecommendation(null);
-    setSprite(null);
-    setAnalysisError(null);
-    setAnalysisStage('idle');
-    setCurrentPage('eat-in-results');
-    void runAnalysis(imageData);
+  const handleSelectDevice = async (deviceId: string) => {
+    selectedDeviceIdRef.current = deviceId;
+    setSelectedDeviceId(deviceId);
+    setShowCameraSettings(false);
+    await startCamera(deviceId);
   };
 
-  const runAnalysis = async (dataUrl: string) => {
+  const runEatInPipeline = async (dataUrl: string) => {
+    setAnalysisError(null);
+    setVision(null);
+    setFridge(null);
+    setRecommendation(null);
+    setSprite(null);
+
     try {
       const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, '');
 
       setAnalysisStage('vision');
       const visionRes = await api.post<VisionResult>('/images/analyze', { image: base64 });
       setVision(visionRes);
-      if (!visionRes.success || visionRes.food_items.length === 0) {
-        throw new Error(visionRes.error ?? 'No food items detected in the photo.');
+      if (!visionRes.success || !visionRes.food_items?.length) {
+        throw new Error(visionRes.error || 'No food items detected in the photo.');
       }
 
       setAnalysisStage('fridge');
-      const raw_ingredients = visionRes.food_items.map((f) => ({
-        name: f.name,
-        confidence: 0.9,
-      }));
       const fridgeRes = await api.post<FridgeResult>('/fridge-interpretation', {
-        raw_ingredients,
+        raw_ingredients: visionRes.food_items.map((f) => ({
+          name: f.name,
+          category: f.category ?? null,
+          confidence: f.confidence ?? null,
+        })),
+        preferences: DEFAULT_PREFERENCES,
       });
+      setFridge(fridgeRes);
 
       setAnalysisStage('recommend');
       const recRes = await api.post<Recommendation>('/location-recommendation', {
         location: { context: 'home' },
-        preferences: { goals: [], dietary_restrictions: [] },
+        preferences: DEFAULT_PREFERENCES,
         fridge_data: fridgeRes,
       });
       setRecommendation(recRes);
@@ -202,22 +215,26 @@ export default function App() {
 
       setAnalysisStage('done');
     } catch (err) {
-      setAnalysisError(err instanceof Error ? err.message : 'Analysis failed.');
       setAnalysisStage('error');
+      setAnalysisError(err instanceof Error ? err.message : String(err));
     }
   };
 
-  const runEatOut = async (ctx: LocationContext) => {
-    setVision(null);
+  const runEatOutPipeline = async (coords: { latitude: number; longitude: number }) => {
+    setAnalysisError(null);
     setRecommendation(null);
     setSprite(null);
-    setAnalysisError(null);
-    setCurrentPage('eat-out-results');
+
     try {
       setAnalysisStage('recommend');
       const recRes = await api.post<Recommendation>('/location-recommendation', {
-        location: { context: ctx },
-        preferences: { goals: [], dietary_restrictions: [] },
+        location: {
+          context: 'other',
+          lat: coords.latitude,
+          lng: coords.longitude,
+          notes: 'User is out and about — GPS coords provided.',
+        },
+        preferences: DEFAULT_PREFERENCES,
       });
       setRecommendation(recRes);
 
@@ -226,15 +243,66 @@ export default function App() {
         occasion: 'recommendation',
         recommendation: recRes,
         user_goal: 'balanced',
-        location_context: ctx,
+        location_context: `lat ${coords.latitude.toFixed(3)}, lng ${coords.longitude.toFixed(3)}`,
       });
       setSprite(spriteRes);
 
       setAnalysisStage('done');
     } catch (err) {
-      setAnalysisError(err instanceof Error ? err.message : 'Analysis failed.');
       setAnalysisStage('error');
+      setAnalysisError(err instanceof Error ? err.message : String(err));
     }
+  };
+
+  const handleCapture = () => {
+    if (!videoRef.current || !canvasRef.current) return;
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const width = video.videoWidth;
+    const height = video.videoHeight;
+    if (!width || !height) return;
+
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d');
+    if (!context) return;
+
+    context.drawImage(video, 0, 0, width, height);
+    const imageData = canvas.toDataURL('image/jpeg', 0.92);
+
+    setCapturedPhoto(imageData);
+    setCameraStatus('captured');
+    stopCamera();
+    setCurrentPage('eat-in-results');
+    void runEatInPipeline(imageData);
+  };
+
+  const requestLocationRecommendations = () => {
+    if (!navigator.geolocation) {
+      setLocationStatus('blocked');
+      setLocationError('Location access is not supported in this browser.');
+      return;
+    }
+
+    setLocationStatus('requesting');
+    setLocationError(null);
+
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        setLocationStatus('granted');
+        setLocationLabel(
+          `Lat ${coords.latitude.toFixed(3)}, Lng ${coords.longitude.toFixed(3)}`,
+        );
+        setCurrentPage('eat-out-results');
+        void runEatOutPipeline({ latitude: coords.latitude, longitude: coords.longitude });
+      },
+      (error) => {
+        setLocationStatus('blocked');
+        setLocationError(error.message || 'Location permission was denied.');
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
+    );
   };
 
   useEffect(() => {
@@ -250,6 +318,21 @@ export default function App() {
       stopCamera();
     };
   }, [currentPage]);
+
+  const stageMessage = (() => {
+    switch (analysisStage) {
+      case 'vision':
+        return 'Scanning your photo for ingredients...';
+      case 'fridge':
+        return 'Figuring out what you can realistically cook...';
+      case 'recommend':
+        return 'Picking the best meal for right now...';
+      case 'sprite':
+        return 'Writing your coaching line...';
+      default:
+        return null;
+    }
+  })();
 
   return (
     <div className="welcome-shell">
@@ -299,8 +382,8 @@ export default function App() {
               <p className="placeholder-kicker">Eat In Flow</p>
               <h1 className="placeholder-title">Take a picture of what you have on hand</h1>
               <p className="placeholder-copy">
-                Use your camera to capture the ingredients you have available. After the photo is
-                taken, the future agent will inspect what is on hand and suggest what you can make.
+                Capture the ingredients you have available. Orbit will scan the photo, figure out
+                what you can make, and coach you toward the best pick.
               </p>
 
               <div className="camera-stage">
@@ -345,17 +428,42 @@ export default function App() {
                 <button
                   type="button"
                   className="camera-button"
-                  onClick={() => void startCamera()}
-                  disabled={cameraStatus === 'requesting'}
+                  onClick={() => void openSettings()}
+                  aria-expanded={showCameraSettings}
                 >
-                  Use Phone
+                  Camera Settings
                 </button>
               </div>
 
-              <p className="camera-footnote">
-                The meal suggestion agent is not implemented yet. After capture, you will land on a
-                placeholder results page where that agent will eventually live.
-              </p>
+              {showCameraSettings ? (
+                <div className="camera-settings-panel">
+                  <p className="camera-settings-title">Vision Device</p>
+                  <p className="camera-settings-hint">
+                    On Mac, connect your iPhone via Continuity Camera (Bluetooth + WiFi) and it
+                    will appear below as a selectable device.
+                  </p>
+                  {availableDevices.length === 0 ? (
+                    <p className="camera-settings-empty">
+                      No devices found. Grant camera permission first.
+                    </p>
+                  ) : (
+                    <ul className="camera-device-list">
+                      {availableDevices.map((device, i) => (
+                        <li key={device.deviceId}>
+                          <button
+                            type="button"
+                            className={`camera-device-item${selectedDeviceId === device.deviceId ? ' camera-device-item-active' : ''}`}
+                            onClick={() => void handleSelectDevice(device.deviceId)}
+                          >
+                            {device.label || `Camera ${i + 1}`}
+                            {selectedDeviceId === device.deviceId ? ' ✓' : ''}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ) : null}
             </div>
           </section>
         ) : null}
@@ -381,41 +489,49 @@ export default function App() {
                   </div>
                 ) : null}
 
-                {analysisStage !== 'idle' && analysisStage !== 'done' && analysisStage !== 'error' ? (
-                  <p className="agent-copy" style={{ marginTop: 12 }}>
-                    {analysisStage === 'vision' && 'Scanning photo for ingredients…'}
-                    {analysisStage === 'fridge' && 'Cleaning up the ingredient list…'}
-                    {analysisStage === 'recommend' && 'Deciding the best meal for you…'}
-                    {analysisStage === 'sprite' && 'Orbit is thinking…'}
-                  </p>
+                {stageMessage ? (
+                  <p className="status-copy">{stageMessage}</p>
                 ) : null}
 
-                {analysisStage === 'error' ? (
-                  <p className="agent-copy" style={{ color: '#c0392b', marginTop: 12 }}>
-                    {analysisError}
-                    <br />
-                    <button
-                      type="button"
-                      className="camera-button"
-                      style={{ marginTop: 8 }}
-                      onClick={() => capturedPhoto && void runAnalysis(capturedPhoto)}
-                    >
-                      Retry
-                    </button>
-                  </p>
+                {analysisStage === 'error' && analysisError ? (
+                  <p className="status-copy">Something went wrong: {analysisError}</p>
                 ) : null}
 
-                {vision && vision.food_items.length > 0 ? (
-                  <div className="captured-photo-card" style={{ marginTop: 16, padding: 16 }}>
+                {vision?.food_items?.length ? (
+                  <div className="chat-bubble">
                     <p className="agent-label">Detected ingredients</p>
-                    <ul style={{ margin: 0, paddingLeft: 18 }}>
-                      {vision.food_items.map((f, i) => (
-                        <li key={i} className="agent-copy">
-                          {f.name}
-                          {f.quantity ? ` — ${f.quantity}` : ''}
-                        </li>
-                      ))}
-                    </ul>
+                    <p className="agent-copy">
+                      {vision.food_items.map((f) => f.name).join(', ')}
+                    </p>
+                  </div>
+                ) : null}
+
+                {fridge?.likely_meals?.length ? (
+                  <div className="chat-bubble">
+                    <p className="agent-label">Likely meals</p>
+                    {fridge.likely_meals.slice(0, 3).map((m) => (
+                      <p key={m.name} className="agent-copy">
+                        <strong>{m.name}</strong>
+                        {m.notes ? ` — ${m.notes}` : ''}
+                      </p>
+                    ))}
+                  </div>
+                ) : null}
+
+                {recommendation?.primary_recommendation ? (
+                  <div className="chat-bubble">
+                    <p className="agent-label">Orbit&apos;s pick</p>
+                    <p className="agent-copy">
+                      <strong>{recommendation.primary_recommendation}</strong>
+                    </p>
+                    {recommendation.rationale ? (
+                      <p className="agent-copy">{recommendation.rationale}</p>
+                    ) : null}
+                    {recommendation.alternative_options?.length ? (
+                      <p className="agent-copy">
+                        Alternatives: {recommendation.alternative_options.join(', ')}
+                      </p>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -425,79 +541,63 @@ export default function App() {
 
                 <div className="chat-bubble">
                   <div className="chat-bubble-tail" aria-hidden="true" />
-                  <p className="agent-label">Orbit{sprite ? ` · ${sprite.mood}` : ''}</p>
+                  <p className="agent-label">Orbit — your coach</p>
                   <p className="agent-copy">
-                    {sprite
+                    {sprite?.line
                       ? sprite.line
                       : analysisStage === 'done'
-                        ? 'No response from Orbit.'
-                        : 'Orbit will react once we know what you have on hand.'}
+                        ? 'Ready when you are.'
+                        : 'Hang tight — I&apos;m looking at what you have and picking your best move.'}
                   </p>
                   {sprite?.followup_prompt ? (
-                    <p className="agent-copy" style={{ opacity: 0.75, marginTop: 8 }}>
-                      {sprite.followup_prompt}
-                    </p>
+                    <p className="agent-copy">{sprite.followup_prompt}</p>
                   ) : null}
-                </div>
-
-                <div className="store-panel">
-                  <p className="agent-label">Meal suggestion</p>
-                  {recommendation ? (
-                    <>
-                      <p className="agent-copy" style={{ fontWeight: 600 }}>
-                        {recommendation.primary_recommendation}
-                      </p>
-                      <p className="agent-copy">{recommendation.rationale}</p>
-                      {recommendation.alternative_options.length > 0 ? (
-                        <p className="agent-copy" style={{ marginTop: 8 }}>
-                          <strong>Alternatives:</strong>{' '}
-                          {recommendation.alternative_options.join(', ')}
-                        </p>
-                      ) : null}
-                      {recommendation.foods_to_avoid.length > 0 ? (
-                        <p className="agent-copy" style={{ marginTop: 4 }}>
-                          <strong>Avoid:</strong> {recommendation.foods_to_avoid.join(', ')}
-                        </p>
-                      ) : null}
-                    </>
-                  ) : (
-                    <p className="agent-copy">
-                      The meal agent will recommend something once the photo is analyzed.
-                    </p>
-                  )}
                 </div>
               </aside>
             </div>
           </section>
         ) : null}
 
-        {currentPage === 'eat-out-pick' ? (
+        {currentPage === 'eat-out-intro' ? (
           <section className="flow-page">
             <button type="button" className="back-button" onClick={() => setCurrentPage('welcome')}>
               Back
             </button>
 
-            <div className="flow-content">
-              <p className="placeholder-kicker">Eat Out Flow</p>
-              <h1 className="placeholder-title">Where are you right now?</h1>
-              <p className="placeholder-copy">
-                Pick the context that's closest — Orbit will coach you through the best play for this
-                spot.
-              </p>
+            <div className="flow-content eat-out-layout">
+              <div className="eat-out-bubble">
+                <div className="bubble-tail" aria-hidden="true" />
+                <p className="question-label">
+                  Please enable location access so that I can recommend you the best restaurants in
+                  the area.
+                </p>
 
-              <div className="action-grid action-grid-stacked" style={{ marginTop: 24 }}>
-                {locationOptions.map((opt) => (
-                  <button
-                    key={opt.key}
-                    type="button"
-                    className="action-button action-button-compact"
-                    onClick={() => void runEatOut(opt.key)}
-                  >
-                    <span className="action-title">{opt.label}</span>
-                    <span className="action-description">{opt.description}</span>
-                  </button>
-                ))}
+                <button
+                  type="button"
+                  className="action-button action-button-compact"
+                  onClick={requestLocationRecommendations}
+                  disabled={locationStatus === 'requesting'}
+                >
+                  <span className="action-title">Give Me Recommendations</span>
+                  <span className="action-description">
+                    I&apos;ll use your location to build a nearby restaurant list.
+                  </span>
+                </button>
+
+                {locationStatus === 'requesting' ? (
+                  <p className="status-copy">Requesting your location now...</p>
+                ) : null}
+
+                {locationStatus === 'blocked' && locationError ? (
+                  <p className="status-copy">{locationError}</p>
+                ) : null}
               </div>
+
+              <img
+                src={stageOneMascot}
+                alt="Stage 1 mascot"
+                className="mascot-sprite mascot-sprite-large"
+              />
             </div>
           </section>
         ) : null}
@@ -507,73 +607,71 @@ export default function App() {
             <button
               type="button"
               className="back-button"
-              onClick={() => setCurrentPage('eat-out-pick')}
+              onClick={() => setCurrentPage('eat-out-intro')}
             >
               Back
             </button>
 
-            <div className="flow-content results-layout">
-              <div className="results-main">
+            <div className="flow-content results-layout eat-out-results-layout">
+              <div className="results-main eat-out-results-main">
                 <p className="placeholder-kicker">Eat Out Results</p>
-                <h1 className="placeholder-title">Your coach's call</h1>
+                <h1 className="placeholder-title">Nearby meal picks</h1>
+                <p className="placeholder-copy">
+                  {locationLabel
+                    ? `Using ${locationLabel} as your location, Orbit is picking the best real-time meal for you.`
+                    : 'Once location access is granted, Orbit will pick the best real-time meal for you.'}
+                </p>
 
-                {analysisStage !== 'idle' && analysisStage !== 'done' && analysisStage !== 'error' ? (
-                  <p className="agent-copy" style={{ marginTop: 12 }}>
-                    {analysisStage === 'recommend' && 'Scanning nearby options…'}
-                    {analysisStage === 'sprite' && 'Orbit is thinking…'}
-                  </p>
+                {stageMessage ? <p className="status-copy">{stageMessage}</p> : null}
+
+                {analysisStage === 'error' && analysisError ? (
+                  <p className="status-copy">Something went wrong: {analysisError}</p>
                 ) : null}
 
-                {analysisStage === 'error' ? (
-                  <p className="agent-copy" style={{ color: '#c0392b', marginTop: 12 }}>
-                    {analysisError}
-                  </p>
+                {recommendation?.primary_recommendation ? (
+                  <div className="chat-bubble eat-out-chat-bubble">
+                    <div className="chat-bubble-tail" aria-hidden="true" />
+                    <p className="agent-label">Orbit&apos;s pick</p>
+                    <p className="agent-copy">
+                      <strong>{recommendation.primary_recommendation}</strong>
+                    </p>
+                    {recommendation.rationale ? (
+                      <p className="agent-copy">{recommendation.rationale}</p>
+                    ) : null}
+                    {recommendation.alternative_options?.length ? (
+                      <p className="agent-copy">
+                        Alternatives: {recommendation.alternative_options.join(', ')}
+                      </p>
+                    ) : null}
+                    {recommendation.foods_to_avoid?.length ? (
+                      <p className="agent-copy">
+                        Skip: {recommendation.foods_to_avoid.join(', ')}
+                      </p>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
 
-              <aside className="mascot-column">
-                <img src={stageOneMascot} alt="Stage 1 mascot" className="mascot-sprite mascot-sprite-panel" />
+              <aside className="mascot-column eat-out-mascot-column">
+                <img
+                  src={stageOneMascot}
+                  alt="Stage 1 mascot"
+                  className="mascot-sprite mascot-sprite-panel"
+                />
 
                 <div className="chat-bubble">
                   <div className="chat-bubble-tail" aria-hidden="true" />
-                  <p className="agent-label">Orbit{sprite ? ` · ${sprite.mood}` : ''}</p>
+                  <p className="agent-label">Orbit — your coach</p>
                   <p className="agent-copy">
-                    {sprite
+                    {sprite?.line
                       ? sprite.line
                       : analysisStage === 'done'
-                        ? 'No response from Orbit.'
-                        : 'Your coach is warming up…'}
+                        ? 'Ready when you are.'
+                        : 'Hang tight — finding your best play right now.'}
                   </p>
                   {sprite?.followup_prompt ? (
-                    <p className="agent-copy" style={{ opacity: 0.75, marginTop: 8 }}>
-                      {sprite.followup_prompt}
-                    </p>
+                    <p className="agent-copy">{sprite.followup_prompt}</p>
                   ) : null}
-                </div>
-
-                <div className="store-panel">
-                  <p className="agent-label">Meal suggestion</p>
-                  {recommendation ? (
-                    <>
-                      <p className="agent-copy" style={{ fontWeight: 600 }}>
-                        {recommendation.primary_recommendation}
-                      </p>
-                      <p className="agent-copy">{recommendation.rationale}</p>
-                      {recommendation.alternative_options.length > 0 ? (
-                        <p className="agent-copy" style={{ marginTop: 8 }}>
-                          <strong>Alternatives:</strong>{' '}
-                          {recommendation.alternative_options.join(', ')}
-                        </p>
-                      ) : null}
-                      {recommendation.foods_to_avoid.length > 0 ? (
-                        <p className="agent-copy" style={{ marginTop: 4 }}>
-                          <strong>Avoid:</strong> {recommendation.foods_to_avoid.join(', ')}
-                        </p>
-                      ) : null}
-                    </>
-                  ) : (
-                    <p className="agent-copy">Working on a recommendation…</p>
-                  )}
                 </div>
               </aside>
             </div>
