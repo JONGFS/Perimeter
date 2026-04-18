@@ -22,6 +22,12 @@ Responsibilities:
 - Flag ingredients that should be used first based on perishability (raw produce, dairy, leftovers > shelf-stable staples).
 - If the user provided dietary preferences, filter meal suggestions to match (e.g. no pork for halal, no meat for vegetarian).
 
+Brevity rules (strict):
+- Meal names: 2-4 words max. No marketing adjectives.
+- Meal notes: ONE short sentence, 10 words max. Plain language.
+- missing_ingredients.impact: ONE short phrase, 6 words max.
+- No em-dashes stacking multiple clauses. Keep it punchy.
+
 Output contract — respond with ONLY a JSON object, no prose before or after, matching exactly:
 {
   "ingredients_detected": [
@@ -52,6 +58,13 @@ Scoring priorities (apply deterministically, in order):
 4. Respects time/budget constraints.
 5. Minimizes crash risk (avoid sugar-heavy or fried-only options when the goal is focus/energy).
 
+Brevity rules (strict):
+- primary_recommendation: 6-10 words. A plain meal name + one key detail. No "with a side of...with a..." chains.
+- alternative_options: 2 items max, each 4-8 words.
+- rationale: ONE sentence, 18 words max. Plain English. No "which" or "that" sub-clauses stacked.
+- foods_to_avoid: 1-3 short items, one or two words each.
+- Do not repeat information across fields.
+
 Recommendation types:
 - "nearby_food" — eat out / grab something given the location context.
 - "cook_at_home" — make something with what's in the fridge.
@@ -63,10 +76,22 @@ Output contract — respond with ONLY a JSON object, no prose before or after, m
   "primary_recommendation": "string — the one meal to eat",
   "alternative_options": ["string", "string"],
   "foods_to_avoid": ["string"],
-  "rationale": "string — 1-2 sentences, plain language, focused on WHY this fits",
+  "rationale": "string — one short sentence, WHY this fits",
   "nutrition_goal_fit": "string — the goal label this satisfies (e.g. high_protein_energy)",
-  "constraints_considered": ["string labels of constraints applied"]
+  "constraints_considered": ["string labels of constraints applied"],
+  "estimated_macros": {
+    "calories": number,
+    "protein_g": number,
+    "carbs_g": number,
+    "fat_g": number,
+    "fiber_g": number
+  }
 }
+
+Macro estimation rules:
+- estimated_macros is for the primary_recommendation only.
+- Use realistic restaurant-portion numbers (a Chipotle chicken bowl ~= 650 kcal / 45g P / 60g C / 20g F / 12g fiber).
+- Always provide numbers, never null. Round to whole grams and kcal.
 """
 
 
@@ -160,6 +185,58 @@ def speak_as_sprite(
         messages=[{"role": "user", "content": json.dumps(payload)}],
     )
     return _extract_json(response)
+
+
+SPRITE_CHAT_SYSTEM_PROMPT = """You are Orbit, the user's personal nutrition coach inside Nourish Orbit. The user is chatting with you for follow-up guidance after a meal recommendation or log.
+
+Voice rules (same as before):
+- First person. Address the user as "you".
+- 1-3 short sentences per reply. Tight, punchy, motivational — never a wall of text.
+- Always grounded in the context provided (their goal, recommendation, macros, stage, streak).
+- Warm, confident, not saccharine. Encouraging, not lecturing. No emojis unless celebrating a real win.
+- Acknowledge friction (tired, limited options, bad day) before redirecting.
+- Never mention that you are an AI, sprite, or character. You are just Orbit, their coach.
+
+Chat playbook:
+- "What else can I eat?" → Suggest ONE specific swap from the curated options or a realistic alternative, with a short why.
+- "Is this enough protein?" → Compare their macros to a balanced target (25-40g protein, 8g+ fiber) and call out what to add or swap.
+- "I don't feel like cooking" → Name one low-effort option and the exact first move.
+- User is venting → Validate in one sentence, then give ONE concrete next step.
+- User confirms they ate something → Celebrate specifically and tie it to their streak or stage.
+
+Output format:
+- Respond with plain text. Your coach line ONLY. No JSON, no preamble, no headers."""
+
+
+def chat_with_sprite(
+    messages: list[dict[str, str]],
+    context: dict[str, Any] | None = None,
+) -> str:
+    context_header = {
+        "role": "user",
+        "content": f"Chat context (do not reply to this directly, use it to ground future replies):\n{json.dumps(context or {}, indent=2)}",
+    }
+    context_ack = {
+        "role": "assistant",
+        "content": "Got it — coaching from that context. Hit me.",
+    }
+
+    full_messages = [context_header, context_ack, *messages]
+
+    response = _client.messages.create(
+        model=MODEL,
+        max_tokens=SPRITE_MAX_TOKENS,
+        system=[
+            {
+                "type": "text",
+                "text": SPRITE_CHAT_SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
+        messages=full_messages,
+    )
+    parts = [b.text for b in response.content if getattr(b, "type", None) == "text"]
+    return "".join(parts).strip()
 
 
 def recommend_meal(

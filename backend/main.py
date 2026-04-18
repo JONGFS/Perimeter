@@ -11,7 +11,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 from vision import process_image_async, base64_to_image, VisionResult
 
-from agents import interpret_fridge, recommend_meal, speak_as_sprite
+from agents import interpret_fridge, recommend_meal, speak_as_sprite, chat_with_sprite
 
 load_dotenv()
 
@@ -108,6 +108,16 @@ class SpriteRequest(BaseModel):
     note: str | None = None
 
 
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class SpriteChatRequest(BaseModel):
+    messages: list[ChatMessage]
+    context: dict[str, Any] | None = None
+
+
 @app.post("/api/location-recommendation")
 async def location_recommendation(req: LocationRecRequest):
     try:
@@ -141,6 +151,18 @@ async def sprite_speak(req: SpriteRequest):
             location_context=req.location_context,
             note=req.note,
         )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"agent_failure: {e}")
+
+
+@app.post("/api/sprite/chat")
+async def sprite_chat(req: SpriteChatRequest):
+    try:
+        reply = chat_with_sprite(
+            messages=[m.model_dump() for m in req.messages],
+            context=req.context,
+        )
+        return {"reply": reply}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"agent_failure: {e}")
 
