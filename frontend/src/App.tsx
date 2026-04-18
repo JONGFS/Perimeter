@@ -22,21 +22,38 @@ export default function App() {
   const [cameraStatus, setCameraStatus] = useState<CameraStatus>('idle');
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
+  const [showCameraSettings, setShowCameraSettings] = useState(false);
+  const [availableDevices, setAvailableDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  // Ref keeps the selected device ID fresh inside async closures and effects
+  const selectedDeviceIdRef = useRef<string | null>(null);
 
   const stopCamera = () => {
-    if (!streamRef.current) {
-      return;
-    }
-
+    if (!streamRef.current) return;
     streamRef.current.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
   };
 
-  const startCamera = async () => {
+  const loadDevices = async () => {
+    try {
+      const all = await navigator.mediaDevices.enumerateDevices();
+      setAvailableDevices(all.filter((d) => d.kind === 'videoinput'));
+    } catch {
+      // enumerateDevices not supported — settings panel will show empty
+    }
+  };
+
+  const openSettings = async () => {
+    setShowCameraSettings((v) => !v);
+    // Refresh device list every time the panel opens so new devices appear
+    await loadDevices();
+  };
+
+  const startCamera = async (deviceId?: string) => {
     if (!navigator.mediaDevices?.getUserMedia) {
       setCameraStatus('blocked');
       setCameraError('Camera access is not supported in this browser.');
@@ -47,13 +64,29 @@ export default function App() {
     setCameraStatus('requesting');
     setCameraError(null);
 
+    // Prefer explicit arg, then ref (always fresh), then default
+    const activeDeviceId = deviceId ?? selectedDeviceIdRef.current;
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' } },
+        // Use `ideal` (not `exact`) so it falls back gracefully if the device
+        // is temporarily unavailable (e.g. right after stopping Continuity Camera)
+        video: activeDeviceId
+          ? { deviceId: { ideal: activeDeviceId } }
+          : { facingMode: { ideal: 'environment' } },
         audio: false,
       });
 
       streamRef.current = stream;
+
+      // When the device disconnects (e.g. iPhone walks away), fall back to webcam
+      stream.getVideoTracks()[0]?.addEventListener('ended', () => {
+        if (streamRef.current === stream) {
+          selectedDeviceIdRef.current = null;
+          setSelectedDeviceId(null);
+          void startCamera();
+        }
+      });
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -61,6 +94,8 @@ export default function App() {
       }
 
       setCameraStatus('ready');
+      // Labels are only available after permission is granted
+      await loadDevices();
     } catch (error) {
       setCameraStatus('blocked');
       setCameraError(
@@ -69,6 +104,13 @@ export default function App() {
           : 'Camera permission was denied or the device camera is unavailable.',
       );
     }
+  };
+
+  const handleSelectDevice = async (deviceId: string) => {
+    selectedDeviceIdRef.current = deviceId;
+    setSelectedDeviceId(deviceId);
+    setShowCameraSettings(false);
+    await startCamera(deviceId);
   };
 
   const handleCapture = () => {
@@ -210,12 +252,42 @@ export default function App() {
                 <button
                   type="button"
                   className="camera-button"
-                  onClick={() => void startCamera()}
-                  disabled={cameraStatus === 'requesting'}
+                  onClick={() => void openSettings()}
+                  aria-expanded={showCameraSettings}
                 >
-                  Use Phone
+                  Camera Settings
                 </button>
               </div>
+
+              {showCameraSettings ? (
+                <div className="camera-settings-panel">
+                  <p className="camera-settings-title">Vision Device</p>
+                  <p className="camera-settings-hint">
+                    On Mac, connect your iPhone via Continuity Camera (Bluetooth + WiFi) and it
+                    will appear below as a selectable device.
+                  </p>
+                  {availableDevices.length === 0 ? (
+                    <p className="camera-settings-empty">
+                      No devices found. Grant camera permission first.
+                    </p>
+                  ) : (
+                    <ul className="camera-device-list">
+                      {availableDevices.map((device, i) => (
+                        <li key={device.deviceId}>
+                          <button
+                            type="button"
+                            className={`camera-device-item${selectedDeviceId === device.deviceId ? ' camera-device-item-active' : ''}`}
+                            onClick={() => void handleSelectDevice(device.deviceId)}
+                          >
+                            {device.label || `Camera ${i + 1}`}
+                            {selectedDeviceId === device.deviceId ? ' ✓' : ''}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ) : null}
 
               <p className="camera-footnote">
                 The meal suggestion agent is not implemented yet. After capture, you will land on a
