@@ -10,18 +10,27 @@ const homeActions = [
   {
     title: 'Eat Out',
     description: 'Find a strong option on the go with guidance for menus, takeout, or quick stops.',
-    nextPage: 'welcome' as const,
+    nextPage: 'eat-out-intro' as const,
   },
 ];
 
-type Page = 'welcome' | 'eat-in-camera' | 'eat-in-results';
+type Page =
+  | 'welcome'
+  | 'eat-in-camera'
+  | 'eat-in-results'
+  | 'eat-out-intro'
+  | 'eat-out-results';
 type CameraStatus = 'idle' | 'requesting' | 'ready' | 'blocked' | 'captured';
+type LocationStatus = 'idle' | 'requesting' | 'granted' | 'blocked';
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>('welcome');
   const [cameraStatus, setCameraStatus] = useState<CameraStatus>('idle');
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
+  const [locationStatus, setLocationStatus] = useState<LocationStatus>('idle');
+  const [locationError, setLocationError] = useState<string | null>(null);
+  const [locationLabel, setLocationLabel] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -100,6 +109,32 @@ export default function App() {
     setCameraStatus('captured');
     stopCamera();
     setCurrentPage('eat-in-results');
+  };
+
+  const requestLocationRecommendations = () => {
+    if (!navigator.geolocation) {
+      setLocationStatus('blocked');
+      setLocationError('Location access is not supported in this browser.');
+      return;
+    }
+
+    setLocationStatus('requesting');
+    setLocationError(null);
+
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        setLocationStatus('granted');
+        setLocationLabel(
+          `Lat ${coords.latitude.toFixed(3)}, Lng ${coords.longitude.toFixed(3)}`,
+        );
+        setCurrentPage('eat-out-results');
+      },
+      (error) => {
+        setLocationStatus('blocked');
+        setLocationError(error.message || 'Location permission was denied.');
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
+    );
   };
 
   useEffect(() => {
@@ -271,6 +306,93 @@ export default function App() {
                     so we can suggest where to pick up missing ingredients.
                   </p>
                 </div>
+              </aside>
+            </div>
+          </section>
+        ) : null}
+
+        {currentPage === 'eat-out-intro' ? (
+          <section className="flow-page">
+            <button type="button" className="back-button" onClick={() => setCurrentPage('welcome')}>
+              Back
+            </button>
+
+            <div className="flow-content eat-out-layout">
+              <div className="eat-out-bubble">
+                <div className="bubble-tail" aria-hidden="true" />
+                <p className="question-label">
+                  Please enable location access so that I can recommend you the best restaurants in
+                  the area.
+                </p>
+
+                <button
+                  type="button"
+                  className="action-button action-button-compact"
+                  onClick={requestLocationRecommendations}
+                  disabled={locationStatus === 'requesting'}
+                >
+                  <span className="action-title">Give Me Recommendations</span>
+                  <span className="action-description">
+                    I&apos;ll use your location to build a nearby restaurant list.
+                  </span>
+                </button>
+
+                {locationStatus === 'requesting' ? (
+                  <p className="status-copy">Requesting your location now...</p>
+                ) : null}
+
+                {locationStatus === 'blocked' && locationError ? (
+                  <p className="status-copy">{locationError}</p>
+                ) : null}
+              </div>
+
+              <img
+                src={stageOneMascot}
+                alt="Stage 1 mascot"
+                className="mascot-sprite mascot-sprite-large"
+              />
+            </div>
+          </section>
+        ) : null}
+
+        {currentPage === 'eat-out-results' ? (
+          <section className="flow-page">
+            <button
+              type="button"
+              className="back-button"
+              onClick={() => setCurrentPage('eat-out-intro')}
+            >
+              Back
+            </button>
+
+            <div className="flow-content results-layout eat-out-results-layout">
+              <div className="results-main eat-out-results-main">
+                <p className="placeholder-kicker">Eat Out Results</p>
+                <h1 className="placeholder-title">Nearby restaurant picks</h1>
+                <p className="placeholder-copy">
+                  {locationLabel
+                    ? `Using ${locationLabel} as a placeholder location, the mascot will eventually recommend restaurants near you.`
+                    : 'Once location access is granted, the mascot will recommend restaurants near you.'}
+                </p>
+
+                <div className="chat-bubble eat-out-chat-bubble">
+                  <div className="chat-bubble-tail" aria-hidden="true" />
+                  <p className="agent-label">Restaurant Recommendations Placeholder</p>
+                  <p className="agent-copy">
+                    I found a few nearby spots you could try:
+                  </p>
+                  <p className="agent-copy">Green Lantern Cafe, 0.6 miles away</p>
+                  <p className="agent-copy">Sprout Kitchen, 1.1 miles away</p>
+                  <p className="agent-copy">Sunny Bowl House, 1.8 miles away</p>
+                </div>
+              </div>
+
+              <aside className="mascot-column eat-out-mascot-column">
+                <img
+                  src={stageOneMascot}
+                  alt="Stage 1 mascot"
+                  className="mascot-sprite mascot-sprite-panel"
+                />
               </aside>
             </div>
           </section>
