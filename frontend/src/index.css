@@ -518,6 +518,7 @@ body::before {
 
 .mascot-sprite {
   display: block;
+  position: relative;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
 }
@@ -530,6 +531,31 @@ body::before {
 .mascot-sprite-panel {
   width: min(100%, 8.5rem);
   margin: 0 0 0.1rem;
+}
+
+.mascot-animated {
+  position: relative;
+  display: block;
+  animation: mascotFloat 1.2s steps(2, end) infinite;
+}
+
+.mascot-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.mascot-frame-one {
+  position: relative;
+  animation: mascotFrameOne 0.9s steps(1, end) infinite;
+}
+
+.mascot-frame-two {
+  animation: mascotFrameTwo 0.9s steps(1, end) infinite;
 }
 
 .chat-bubble {
@@ -612,6 +638,41 @@ body::before {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes mascotFrameOne {
+  0%,
+  49.999% {
+    opacity: 1;
+  }
+
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes mascotFrameTwo {
+  0%,
+  49.999% {
+    opacity: 0;
+  }
+
+  50%,
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes mascotFloat {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-4px);
   }
 }
 

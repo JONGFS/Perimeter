@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import stageOneMascot from './assets/stage-1-mascot.png';
+import stageOneMascotFrameTwo from './assets/stage-1-mascot-frame-2.png';
 
 const homeActions = [
   {
@@ -22,6 +23,20 @@ type Page =
   | 'eat-out-results';
 type CameraStatus = 'idle' | 'requesting' | 'ready' | 'blocked' | 'captured';
 type LocationStatus = 'idle' | 'requesting' | 'granted' | 'blocked';
+
+function AnimatedMascot({ className }: { className: string }) {
+  return (
+    <div className={`mascot-animated ${className}`} aria-label="Stage 1 mascot animation" role="img">
+      <img src={stageOneMascot} alt="" aria-hidden="true" className="mascot-frame mascot-frame-one" />
+      <img
+        src={stageOneMascotFrameTwo}
+        alt=""
+        aria-hidden="true"
+        className="mascot-frame mascot-frame-two"
+      />
+    </div>
+  );
+}
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>('welcome');
@@ -226,7 +241,7 @@ export default function App() {
                 </div>
               </div>
 
-              <img src={stageOneMascot} alt="Stage 1 mascot" className="mascot-sprite mascot-sprite-large" />
+              <AnimatedMascot className="mascot-sprite mascot-sprite-large" />
             </div>
           </section>
         ) : null}
@@ -360,7 +375,7 @@ export default function App() {
               </div>
 
               <aside className="mascot-column">
-                <img src={stageOneMascot} alt="Stage 1 mascot" className="mascot-sprite mascot-sprite-panel" />
+                <AnimatedMascot className="mascot-sprite mascot-sprite-panel" />
 
                 <div className="chat-bubble">
                   <div className="chat-bubble-tail" aria-hidden="true" />
@@ -418,11 +433,7 @@ export default function App() {
                 ) : null}
               </div>
 
-              <img
-                src={stageOneMascot}
-                alt="Stage 1 mascot"
-                className="mascot-sprite mascot-sprite-large"
-              />
+              <AnimatedMascot className="mascot-sprite mascot-sprite-large" />
             </div>
           </section>
         ) : null}
@@ -460,11 +471,7 @@ export default function App() {
               </div>
 
               <aside className="mascot-column eat-out-mascot-column">
-                <img
-                  src={stageOneMascot}
-                  alt="Stage 1 mascot"
-                  className="mascot-sprite mascot-sprite-panel"
-                />
+                <AnimatedMascot className="mascot-sprite mascot-sprite-panel" />
               </aside>
             </div>
           </section>
