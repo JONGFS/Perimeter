@@ -319,20 +319,6 @@ const DEFAULT_PREFERENCES = {
   time_minutes: null as number | null,
 };
 
-function AnimatedMascot({ className }: { className: string }) {
-  return (
-    <div className={`mascot-animated ${className}`} aria-label="Stage 1 mascot animation" role="img">
-      <img src={stageOneMascot} alt="" aria-hidden="true" className="mascot-frame mascot-frame-one" />
-      <img
-        src={stageOneMascotFrameTwo}
-        alt=""
-        aria-hidden="true"
-        className="mascot-frame mascot-frame-two"
-      />
-    </div>
-  );
-}
-
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>('welcome');
   const [cameraStatus, setCameraStatus] = useState<CameraStatus>('idle');
