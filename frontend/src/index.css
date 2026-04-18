@@ -392,7 +392,6 @@ body::before {
   color: #efffe7;
 }
 
-<<<<<<< HEAD
 .camera-settings-panel {
   width: min(100%, 36rem);
   margin: 0.9rem auto 0;
@@ -455,12 +454,12 @@ body::before {
 
 .camera-device-item-active {
   background: linear-gradient(180deg, #ffd85f 0%, #ff9964 100%);
-=======
+}
+
 .status-copy {
   margin: 1rem 0 0;
   color: var(--ink);
   line-height: 1.7;
->>>>>>> main
 }
 
 .results-layout {
