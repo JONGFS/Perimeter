@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import stageOneMascot from './assets/stage-1-mascot.png';
 
 const homeActions = [
   {
@@ -128,23 +129,27 @@ export default function App() {
               Small, smart food decisions for the part of your day you are in right now.
             </p>
 
-            <div className="question-bubble">
-              <div className="bubble-tail" aria-hidden="true" />
-              <p className="question-label">What would you like to do today?</p>
+            <div className="hero-speaker">
+              <div className="question-bubble">
+                <div className="bubble-tail" aria-hidden="true" />
+                <p className="question-label">What would you like to do today?</p>
 
-              <div className="action-grid action-grid-stacked">
-                {homeActions.map((action) => (
-                  <button
-                    key={action.title}
-                    type="button"
-                    className="action-button action-button-compact"
-                    onClick={() => setCurrentPage(action.nextPage)}
-                  >
-                    <span className="action-title">{action.title}</span>
-                    <span className="action-description">{action.description}</span>
-                  </button>
-                ))}
+                <div className="action-grid action-grid-stacked">
+                  {homeActions.map((action) => (
+                    <button
+                      key={action.title}
+                      type="button"
+                      className="action-button action-button-compact"
+                      onClick={() => setCurrentPage(action.nextPage)}
+                    >
+                      <span className="action-title">{action.title}</span>
+                      <span className="action-description">{action.description}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
+
+              <img src={stageOneMascot} alt="Stage 1 mascot" className="mascot-sprite mascot-sprite-large" />
             </div>
           </section>
         ) : null}
@@ -196,19 +201,19 @@ export default function App() {
               <div className="camera-actions">
                 <button
                   type="button"
-                  className="camera-button"
-                  onClick={() => void startCamera()}
-                  disabled={cameraStatus === 'requesting'}
-                >
-                  {cameraStatus === 'ready' ? 'Restart Camera' : 'Open Camera'}
-                </button>
-                <button
-                  type="button"
                   className="camera-button camera-button-primary"
                   onClick={handleCapture}
                   disabled={cameraStatus !== 'ready'}
                 >
-                  Take Picture
+                  Take Photo
+                </button>
+                <button
+                  type="button"
+                  className="camera-button"
+                  onClick={() => void startCamera()}
+                  disabled={cameraStatus === 'requesting'}
+                >
+                  Use Phone
                 </button>
               </div>
 
@@ -248,16 +253,10 @@ export default function App() {
               </div>
 
               <aside className="mascot-column">
-                <div className="mascot-placeholder">
-                  <p className="agent-label">Mascot Placeholder</p>
-                  <p className="agent-copy">
-                    A future pixel mascot will live here. It will be the one delivering meal
-                    suggestions, reacting to food decisions, and showing progress in the gamified
-                    experience.
-                  </p>
-                </div>
+                <img src={stageOneMascot} alt="Stage 1 mascot" className="mascot-sprite mascot-sprite-panel" />
 
-                <div className="chat-placeholder">
+                <div className="chat-bubble">
+                  <div className="chat-bubble-tail" aria-hidden="true" />
                   <p className="agent-label">Chat Box Placeholder</p>
                   <p className="agent-copy">
                     This will become the mascot-connected text area where the user sees suggestions
@@ -265,7 +264,7 @@ export default function App() {
                   </p>
                 </div>
 
-                <div className="store-placeholder">
+                <div className="store-panel">
                   <p className="agent-label">Nearby Supermarkets Placeholder</p>
                   <p className="agent-copy">
                     This section will list supermarkets near the user, along with their locations,
